@@ -15,10 +15,11 @@ and stops when nothing above `low` is left unresolved.
 
 ## Why this exists
 
-Claude Code ships a `code-review` skill. It caps its output at 4 findings on
-`medium` and 8 on `high`, and when it trims, convention and structure findings
-go first. On a 60-file PR that means most of what you'd actually want flagged
-never reaches the author.
+Claude Code ships a `code-review` skill. In my use it caps how many findings it
+returns per effort level, and when it trims, convention and structure findings
+are the first to go. On a 60-file PR that means most of what you'd actually want
+flagged never reaches the author. (The exact caps aren't documented and may
+change between versions — this is observed behaviour, not a published number.)
 
 These commands remove the cap. The only thing that shortens the list is
 deduplication — one comment per root cause, not one per occurrence.
