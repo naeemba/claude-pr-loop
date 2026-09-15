@@ -79,7 +79,8 @@ const runCommand = (commandFile) => `
 You are a fresh session. The user has invoked the slash command whose definition
 lives at ${COMMANDS_DIR}/${commandFile}, with the argument "${pr}".
 
-1. Read ${COMMANDS_DIR}/${commandFile}.
+1. Read ${COMMANDS_DIR}/${commandFile} — expand the ~ to your home directory
+   first, the Read tool does not do it for you.
 2. Substitute $ARGUMENTS with ${pr}.
 3. Execute the command body EXACTLY as written — including any skill it tells you
    to use (invoke that skill via the Skill tool and follow it fully). Add no
