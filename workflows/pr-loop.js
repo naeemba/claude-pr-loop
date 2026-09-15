@@ -1,9 +1,10 @@
 export const meta = {
   name: 'pr-loop',
-  description: 'Chained PR review -> fix -> re-review loop using fresh-context subagents.',
-  whenToUse: 'Triggered by /pr-loop <pr#>. Loops review/fix/re-review until convergence or max rounds.',
+  description: 'Chained review -> fix -> re-review loop using fresh-context subagents. GitHub PRs or GitLab MRs.',
+  whenToUse: 'Triggered by /pr-loop <pr#> or /mr-loop <mr-iid>. Loops review/fix/re-review until convergence or max rounds.',
   phases: [
     { title: 'Round 1: Review', detail: 'Runs /pr-review verbatim in a fresh session' },
+    { title: 'Round 1: Re-review', detail: 'Only with startAt: rereview — runs /pr-rereview instead' },
     { title: 'Round 1: Fix', detail: 'Runs /pr-address verbatim in a fresh session' },
     { title: 'Round 2: Re-review', detail: 'Runs /pr-rereview verbatim in a fresh session' },
     { title: 'Round 2: Fix', detail: 'Runs /pr-address verbatim in a fresh session' },
@@ -19,22 +20,51 @@ export const meta = {
 }
 
 const MAX_ROUNDS = (args && args.maxRounds) || 6
-// The loop stops once nothing above this severity is left unresolved — the
-// remaining low/nit tail is handed back for a manual pass rather than costing a
-// re-review + fix agent pair per round. Set `stopAt: 'nit'` to only stop on a
-// fully clean PR, or a higher tag to hand back more.
-// Must match the scale defined in commands/pr-review.md.
+// The loop stops re-reviewing once nothing above this severity is left
+// unresolved — the remaining tail gets one final fix round with nothing after it
+// to check the work, rather than costing a re-review + fix agent pair per round.
+// Set `stopAt: 'nit'` to only stop on a fully clean PR; a higher tag sends more,
+// and more serious, findings into that unverified final round.
+// Must match the scale defined in ~/.claude/review/standard.md, which is the
+// source of truth for it; this array is the only copy and must not drift.
 const SEVERITY_ORDER = ['nit', 'low', 'medium', 'high', 'blocker']
 const STOP_AT = (args && args.stopAt) || 'low'
 if (!SEVERITY_ORDER.includes(STOP_AT)) {
   throw new Error(`pr-loop: stopAt must be one of ${SEVERITY_ORDER.join(', ')}`)
 }
+// Start round 1 on /pr-rereview instead of /pr-review. For a PR whose findings
+// were already fixed elsewhere (a second session, a manual pass): round 1 then
+// verifies those fixes and resolves their threads rather than reviewing the head
+// as if nothing had been addressed.
+const START_AT_REREVIEW = Boolean(args && args.startAt === 'rereview')
+
 const COMMANDS_DIR = '~/.claude/commands'
+
+// Same loop, two forges. The rounds, the counts and the convergence rules are
+// identical -- only the command files each round executes and the script that
+// lists open threads differ, and those differ by one prefix: pr- on GitHub,
+// mr- on GitLab. `forge: 'gitlab'` is what /mr-loop passes.
+const FORGE_PREFIXES = { github: 'pr', gitlab: 'mr' }
+const forgeName = (args && args.forge) || 'github'
+const prefix = FORGE_PREFIXES[forgeName]
+if (!prefix) {
+  throw new Error(`pr-loop: forge must be one of ${Object.keys(FORGE_PREFIXES).join(', ')}`)
+}
+const FORGE = {
+  review: `${prefix}-review.md`,
+  rereview: `${prefix}-rereview.md`,
+  address: `${prefix}-address.md`,
+  threadsScript: `~/.claude/scripts/${prefix}-unresolved-threads.sh`,
+}
+
+// Run each round's agent in its own git worktree so the loop never touches the
+// branch checked out in the user's working copy.
+const ISOLATION = args && args.worktree ? 'worktree' : undefined
 
 const pr = typeof args === 'string'
   ? args.trim()
-  : (args && (args.pr || args.prNumber || args.number))
-if (!pr) throw new Error('pr-loop: PR number required as args (string) or args.pr')
+  : (args && (args.pr || args.mr || args.iid || args.prNumber || args.number))
+if (!pr) throw new Error('pr-loop: PR/MR number required as args (string) or args.pr')
 
 const NO_ATTRIBUTION = `
 IMPORTANT: Never mention Claude, Anthropic, or any AI tooling in commits, comments,
@@ -60,7 +90,7 @@ ${NO_ATTRIBUTION}
 
 const REVIEW_SCHEMA = {
   type: 'object',
-  required: ['summary', 'commentsPostedThisRound', 'unresolvedCommentsRemaining', 'remainingAtOrBelowFloor'],
+  required: ['summary', 'commentsPostedThisRound', 'unresolvedCommentsRemaining', 'remainingAtOrBelowFloor', 'blockedOnHuman'],
   properties: {
     summary: { type: 'string', description: '1-3 sentence summary of the review outcome.' },
     commentsPostedThisRound: {
@@ -69,25 +99,35 @@ const REVIEW_SCHEMA = {
     },
     unresolvedCommentsRemaining: {
       type: 'integer',
-      description: `After finishing, run \`~/.claude/scripts/pr-unresolved-threads.sh ${pr}\` ONCE inside the repo (it paginates GraphQL reviewThreads and prints every thread with isResolved == false, including any you just posted) and report how many threads it printed. Classify every thread from that same output; do not guess from memory of what you posted.`,
+      description: `After finishing, run \`${FORGE.threadsScript} ${pr}\` ONCE inside the repo (it paginates the forge API and prints every unresolved thread, including any you just posted) and report how many threads it printed. Classify every thread from that same output; do not guess from memory of what you posted.`,
     },
     remainingAtOrBelowFloor: {
       type: 'array',
       items: { type: 'string' },
-      description: `One line per unresolved thread tagged ${STOP_AT} or below: "path:line — [tag] — what it asks for". A thread with NO severity tag never goes here — a teammate's plain comment is not a nit just because nobody labelled it. This is the hand-back list for a manual pass, so it must be specific enough to act on without reopening the PR. Empty array if there are none.`,
+      description: `One line per unresolved thread tagged ${STOP_AT} or below: "path:line — [tag] — what it asks for". A thread with NO severity tag never goes here — a teammate's plain comment is not a nit just because nobody labelled it. This is the final fix round's work list, so it must be specific enough to act on without reopening the PR. Empty array if there are none.`,
+    },
+    blockedOnHuman: {
+      type: 'array',
+      items: { type: 'string' },
+      description: `One line per unresolved thread that is waiting on a PERSON, not on a code change: raised by a different author, and the most recent comment is a reply from your side, so the ball is in their court. Format: "path:line — who raised it — what it is waiting on". A thread whose last comment is theirs is NOT blocked — it is a finding, and it belongs in the fix round. Each thread appears in at most one list: if it would also qualify for remainingAtOrBelowFloor, put it here instead. Empty array if there are none.`,
     },
   },
 }
 
 const FIX_SCHEMA = {
   type: 'object',
-  required: ['summary', 'commitShas', 'addressed', 'rejected', 'pushed'],
+  required: ['summary', 'commitShas', 'addressed', 'rejected', 'pushed', 'rejectedThreads'],
   properties: {
     summary: { type: 'string', description: '1-3 sentence summary of fixes applied and pushed. Name any thread you rejected but left open because a different author raised it — those need a human answer.' },
     commitShas: { type: 'array', items: { type: 'string' }, description: 'Short SHAs of commits pushed this round.' },
     addressed: { type: 'integer', description: 'Comments resolved with a code fix + commit-SHA reply THIS round.' },
     rejected: { type: 'integer', description: 'Comments you rejected THIS round — a fresh rejection reply, not one left from an earlier round. A thread you deliberately left alone because you already rejected it does not count; counting it again hides the fact that the round made no progress and keeps the loop spinning.' },
     pushed: { type: 'boolean', description: 'Whether commits were pushed to the PR branch this round.' },
+    rejectedThreads: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'One line per thread you rejected THIS round: "path:line — why you did not fix it". Empty array if you rejected nothing.',
+    },
   },
 }
 
@@ -102,10 +142,27 @@ These are raw counts for loop control — do not decide yourself whether the PR 
 const fixSuffix = `
 After the command is fully executed, ensure any commits are pushed to the PR
 branch, then return a structured result via the StructuredOutput tool.
-If the GitHub API is temporarily unavailable, retry with backoff before giving up.
+If the forge API is temporarily unavailable, retry with backoff before giving up.
+`.trim()
+
+// The last fix round is not followed by a re-review, so nothing downstream will
+// catch a fix that breaks something. Say so, rather than letting the agent
+// assume another round will.
+const FINAL_FIX_NOTE = `
+This is the LAST round: apart from any thread already waiting on a person, only
+threads tagged \`${STOP_AT}\` or below are left, and no re-review follows this
+one. Leave the waiting threads alone. Nothing downstream will verify your work,
+so keep each fix small and self-evidently correct, and run whatever checks the
+repo has before pushing. If a fix would need real restructuring to do safely,
+reject it with an explanation instead of half-doing it.
 `.trim()
 
 const history = []
+let blockedOnHuman = []
+// Every exit goes through here, so no status can forget the round history or
+// the threads waiting on a person -- the summary reads them off the top level
+// instead of digging through history.
+const finish = (result) => ({ ...result, blockedOnHuman, history })
 
 // agent() returns null on a terminal API error (e.g. 529) and THROWS when the
 // subagent ends its turn without calling StructuredOutput (it happens when the
@@ -134,23 +191,33 @@ const runAgentWithRetry = async (prompt, options) => {
 }
 
 for (let round = 1; round <= MAX_ROUNDS; round++) {
-  const isFirstRound = round === 1
+  const isFirstRound = round === 1 && !START_AT_REREVIEW
   phase(`Round ${round}: ${isFirstRound ? 'Review' : 'Re-review'}`)
 
   const review = await runAgentWithRetry(
-    `${runCommand(isFirstRound ? 'pr-review.md' : 'pr-rereview.md')}\n\n${reviewSuffix}`,
-    { label: isFirstRound ? 'review-r1' : `re-review-r${round}`, schema: REVIEW_SCHEMA },
+    `${runCommand(isFirstRound ? FORGE.review : FORGE.rereview)}\n\n${reviewSuffix}`,
+    { label: isFirstRound ? 'review-r1' : `re-review-r${round}`, schema: REVIEW_SCHEMA, isolation: ISOLATION },
   )
-  if (!review) return { status: 'agent-error', stage: 'review', rounds: round, history }
+  if (!review) return finish({ status: 'agent-error', stage: 'review', rounds: round })
 
   // Derived, not self-reported: every unresolved thread is either in the
   // at-or-below-floor list or above the floor (untagged threads never enter the
-  // list, so a teammate's unlabelled comment always counts as above).
-  const aboveFloor = review.unresolvedCommentsRemaining - review.remainingAtOrBelowFloor.length
+  // list, so a teammate's unlabelled comment always counts as above). Threads
+  // already answered and waiting on a person come out too — no fix round can
+  // close one, so leaving it in the count buys a wasted agent pair every round
+  // and hides the fact that the code side of the PR is done.
+  blockedOnHuman = review.blockedOnHuman
+  const aboveFloor =
+    review.unresolvedCommentsRemaining - review.remainingAtOrBelowFloor.length - blockedOnHuman.length
+  // Negative can only mean one thread was filed under both lists, so it got
+  // subtracted twice and a real finding is about to be dropped. Say so.
+  if (aboveFloor < 0) {
+    log(`Round ${round}: miscount — ${review.remainingAtOrBelowFloor.length} at-or-below-floor + ${blockedOnHuman.length} blocked exceeds ${review.unresolvedCommentsRemaining} unresolved; a thread is in both lists.`)
+  }
 
   history.push({ round, stage: isFirstRound ? 'review' : 're-review', ...review })
   log(
-    `Round ${round} review: ${review.summary} | posted=${review.commentsPostedThisRound} unresolved=${review.unresolvedCommentsRemaining} aboveFloor=${aboveFloor}`,
+    `Round ${round} review: ${review.summary} | posted=${review.commentsPostedThisRound} unresolved=${review.unresolvedCommentsRemaining} blockedOnHuman=${blockedOnHuman.length} aboveFloor=${aboveFloor}`,
   )
 
   // Convergence is decided HERE, from counts, not by the reviewer's judgment:
@@ -158,34 +225,57 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
   // gate this — confirmation replies on resolved threads count as posted.)
   if (review.unresolvedCommentsRemaining === 0) {
     log(`Converged after ${round} review round${round > 1 ? 's' : ''}.`)
-    return { status: 'converged', rounds: round, history }
+    return finish({ status: 'converged', rounds: round })
   }
 
-  // Stop before spawning the fix agent once only a stopAt-and-below tail is
-  // left: those get a manual pass instead of another re-review + fix pair.
-  if (aboveFloor <= 0) {
-    const remaining = review.remainingAtOrBelowFloor
-    log(`Nothing above \`${STOP_AT}\` left after ${round} round${round > 1 ? 's' : ''}. Handing back ${remaining.length} thread${remaining.length === 1 ? '' : 's'}.`)
-    return { status: 'stopped-at-floor', stopAt: STOP_AT, rounds: round, handBack: remaining, history }
+  // Once only a stopAt-and-below tail is left, this round's fix agent is the
+  // last one: it addresses the tail and the loop ends without a re-review. A
+  // fix at or below the floor is not worth another review + fix agent pair to verify.
+  const isFinalFix = aboveFloor <= 0
+  const floorThreads = review.remainingAtOrBelowFloor
+  if (isFinalFix) {
+    log(`Nothing above \`${STOP_AT}\` left after ${round} round${round > 1 ? 's' : ''}.`)
+    if (floorThreads.length === 0) {
+      // Nothing a fix round could touch either -- every thread waits on a person.
+      log(`Nothing to fix; ${blockedOnHuman.length} waiting on a person.`)
+      return finish({ status: 'stopped-at-floor', stopAt: STOP_AT, rounds: round })
+    }
+    log(`Final fix pass over ${floorThreads.length} thread${floorThreads.length === 1 ? '' : 's'}, then stopping without a re-review.`)
   }
 
   phase(`Round ${round}: Fix`)
   const fix = await runAgentWithRetry(
-    `${runCommand('pr-address.md')}\n\n${fixSuffix}`,
-    { label: `fix-r${round}`, schema: FIX_SCHEMA },
+    `${runCommand(FORGE.address)}\n\n${fixSuffix}${isFinalFix ? `\n\n${FINAL_FIX_NOTE}` : ''}`,
+    { label: `fix-r${round}`, schema: FIX_SCHEMA, isolation: ISOLATION },
   )
-  if (!fix) return { status: 'agent-error', stage: 'fix', rounds: round, history }
+  if (!fix) return finish({ status: 'agent-error', stage: 'fix', rounds: round })
 
   history.push({ round, stage: 'fix', ...fix })
   log(
     `Round ${round} fix: ${fix.summary} | addressed=${fix.addressed} rejected=${fix.rejected} commits=${fix.commitShas.length}`,
   )
 
+  if (isFinalFix) {
+    // Carry the fix round's own numbers out: `floorThreads` is what it was ASKED
+    // to do, not what it did. Without these, a final round that rejected
+    // everything -- or did nothing at all -- reads exactly like one that fixed
+    // every thread on the list.
+    return finish({
+      status: 'floor-addressed',
+      stopAt: STOP_AT,
+      rounds: round,
+      floorThreads,
+      addressed: fix.addressed,
+      rejected: fix.rejected,
+      rejectedThreads: fix.rejectedThreads,
+    })
+  }
+
   if (fix.addressed === 0 && fix.rejected === 0) {
     log(`No progress in round ${round} fix. Exiting to avoid infinite loop.`)
-    return { status: 'no-progress', rounds: round, history }
+    return finish({ status: 'no-progress', rounds: round })
   }
 }
 
 log(`Hit MAX_ROUNDS (${MAX_ROUNDS}). Stopping.`)
-return { status: 'max-rounds-hit', rounds: MAX_ROUNDS, history }
+return finish({ status: 'max-rounds-hit', rounds: MAX_ROUNDS })
