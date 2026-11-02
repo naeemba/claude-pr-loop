@@ -3,7 +3,7 @@
 // network and no subagents.
 //   node --test tests/pr-loop.test.js
 //
-// It lives outside workflows/ on purpose: install.sh links that folder's files into
+// It lives outside workflows/ on purpose: install.sh copies that folder's files into
 // ~/.claude/workflows, and a test file there would read as a workflow.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'

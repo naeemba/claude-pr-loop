@@ -27,7 +27,11 @@ for file in commands/*.md review/*.md scripts/*.sh; do
 done
 mkdir -p "$target/workflows"
 for file in workflows/*.js; do
-  # rm first so a link left by an older install is replaced, not written through.
+  # Keep an edited copy aside, as link_into_place does; rm the rest so a link
+  # left by an older install is replaced, not written through.
+  if [ -f "$target/$file" ] && [ ! -L "$target/$file" ] && ! cmp -s "$file" "$target/$file"; then
+    mv "$target/$file" "$target/$file.backup-$(date +%Y%m%d%H%M%S)"
+  fi
   rm -f "$target/$file"
   cp "$file" "$target/$file"
 done

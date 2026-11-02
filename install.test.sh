@@ -37,5 +37,6 @@ workflow_copied "after replacing the old link"
 echo stale > "$work/.claude/workflows/pr-loop.js"
 install
 workflow_copied "after a re-run over a stale copy"
+compgen -G "$work/.claude/workflows/pr-loop.js.backup-*" >/dev/null || fail "edited workflow copy not backed up"
 [[ $(readlink "$work/.claude/commands/pr-loop.md") == "$checkout/commands/pr-loop.md" ]] || fail "second run broke a link"
 echo ok

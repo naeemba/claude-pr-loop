@@ -75,8 +75,12 @@ this checkout no longer has.
 The workflow is **copied** into `~/.claude/workflows/`, not linked. The Workflow
 tool follows a link to its target and refuses one outside what the session can
 read, so a linked `pr-loop.js` fails in every project other than this checkout.
-A copy does not follow `git pull`: **re-run `./install.sh` after pulling.** Each
-run overwrites the installed copy.
+A copy does not follow `git pull`: **re-run `./install.sh` after pulling.**
+`/pr-loop` and `/mr-loop` refuse to start while the copy differs from the
+checkout. Each run replaces the installed copy; one you edited is moved aside as
+`<name>.backup-<timestamp>` first. A copy is not a link, so the cleanup above
+does not cover it: if the checkout renames or drops a workflow, delete the old
+copy from `~/.claude/workflows/` by hand.
 
 The paths matter: the commands read `~/.claude/review/standard.md` by name, and
 the workflow reads the command files out of `~/.claude/commands`.
