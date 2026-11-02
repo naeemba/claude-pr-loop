@@ -49,7 +49,12 @@ once it has opened the file at that sha and checked.
 
 ## Push to the GitLab remote
 
-    eval "$(~/.claude/scripts/gitlab-remote.sh)" && git push "$GITLAB_REMOTE" HEAD
+    eval "$(~/.claude/scripts/gitlab-remote.sh)" && git push "$GITLAB_REMOTE" "HEAD:$(glab api \
+      "projects/$GITLAB_PROJECT/merge_requests/$ARGUMENTS" | jq -r .source_branch)"
+
+Name the destination branch: a conflicts round can leave the checkout detached,
+and `git push "$GITLAB_REMOTE" HEAD` then fails with `Did you mean to create a
+new branch by pushing to 'HEAD:refs/heads/HEAD'?`.
 
 `git push` with no argument follows the branch's configured upstream, which in
 some repos may well be GitHub. Push there and the MR never sees the fix, every

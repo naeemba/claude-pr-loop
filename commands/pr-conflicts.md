@@ -76,3 +76,18 @@ their own can fail together, and that is exactly what a conflict is. Do not push
 a branch you know is red.
 
     git push origin HEAD:<headRefName>
+
+## Put the local branch back
+
+The push leaves the checkout detached, and the next round's `git push` fails
+there with `You are not currently on a branch`. Move the local branch up to the
+merge when it can fast-forward, and stay detached when it cannot:
+
+    merged=$(git rev-parse HEAD) \
+      && { git switch <headRefName> && git merge --ff-only "$merged" \
+           || git switch --detach "$merged"; }
+
+The switch fails when the branch is checked out in another worktree, and the
+fast-forward fails when the local branch had commits the PR does not. Either
+way the checkout ends on the merge, detached; say so in your summary, so the
+user does not commit there thinking they are on the branch.

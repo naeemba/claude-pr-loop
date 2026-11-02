@@ -39,7 +39,7 @@ opinion of its own work.
 | File | Role |
 |---|---|
 | `review/standard.md` | **The review standard.** What to look for, how to verify it, how to grade it. All four review commands read this one file. |
-| `commands/pr-review.md` | Initial review. Shards the diff, runs up to four grouped finders and one verifier per shard (one agent working through it all inside `/pr-loop`), posts inline comments. |
+| `commands/pr-review.md` | Initial review. Shards the diff, runs up to four grouped finders and at least one verifier per shard (one agent working through it all inside `/pr-loop`), posts inline comments. |
 | `commands/pr-address.md` | Fixes valid comments, rejects invalid ones with a reason. Replies with the commit SHA. Never resolves threads. |
 | `commands/pr-rereview.md` | Verifies each fix against the code at that SHA, resolves what's genuinely fixed, reviews what the fixes broke. |
 | `commands/pr-conflicts.md` | Merges the base branch into a conflicting PR and resolves by hand. Never rebases. The loop runs it before round 1. |
@@ -220,7 +220,7 @@ it aborts and the run stops with `conflicts-unresolved`.
 `pr-review` reads the changed line count per file and packs it into shards of
 about 800 changed lines along real seams (schema, repository, logic, routes,
 components, tests). Each shard gets up to four finder agents — the angles are
-grouped so the same code isn't read nine times — and one verifier. A big change
+grouped so the same code isn't read nine times — and at least one verifier. A big change
 gets several shards, not one agent skimming everything. It prints the agent count
 first and asks before going over 60.
 
@@ -304,8 +304,8 @@ instead. Useful for a dry run on someone else's change.
 
 ## Cost
 
-The loop is not cheap. Standalone, a review is up to four finders plus one verifier
-per shard. Inside `/pr-loop` each round is one review agent followed by one fix
+The loop is not cheap. Standalone, a review is up to four finders plus at least one verifier
+per shard (one per ~15 candidates). Inside `/pr-loop` each round is one review agent followed by one fix
 agent. A large change over several
 rounds is a lot of tokens. Run `/pr-review` on its own first to see what you're
 in for before reaching for `/pr-loop`.

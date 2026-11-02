@@ -59,3 +59,11 @@ to one dialog but not its sibling, a helper deduplicated in one file and left
 inline in another. Reviewers keep re-finding the same hole in sibling files
 rounds later; one sweep now kills the whole class. The sweep stays inside the
 files this PR already changed.
+
+## Push to the PR's head branch
+
+    git push origin HEAD:$(gh pr view $ARGUMENTS --json headRefName -q .headRefName)
+
+Name the destination. A conflicts round can leave the checkout detached, and a
+bare `git push` or `git push origin HEAD` then fails, so the round's fixes never
+reach the PR and every reply points at a sha nobody can find.
