@@ -63,9 +63,12 @@ worth asking again. A merge commit is uglier and costs nothing.
   hand-merged lockfile installs a dependency tree nobody has ever tested.
 - **Stop rather than guess.** If two people changed the same logic in
   incompatible ways and the code does not tell you which one wins, run
-  `git merge --abort`, leave the branch exactly as you found it, and report the
-  conflict unresolved, naming the file and what the two sides disagree about.
-  Say who to ask if the blame makes that obvious. A wrong resolution is worse
+  `git merge --abort && git switch -` (`-` is whatever was checked out before
+  the detach), so the user is back where the run started and not on a detached
+  head where a commit lands on no branch. Report the conflict unresolved,
+  naming the file and what the two sides disagree about, and say in the summary
+  which branch the checkout is on. Say who to ask if the blame makes that
+  obvious. A wrong resolution is worse
   than an open conflict: an open conflict blocks the merge button, and a wrong
   one lands looking deliberate.
 
@@ -79,9 +82,11 @@ a branch you know is red.
 
 ## Put the local branch back
 
-The push leaves the checkout detached, and the next round's `git push` fails
-there with `You are not currently on a branch`. Move the local branch up to the
-merge when it can fast-forward, and stay detached when it cannot:
+The push leaves the checkout detached. The fix rounds push to a named branch,
+so they work from there; the user does not. Left detached, they come back to
+`HEAD detached at origin/<headRefName>`, and a commit they make there lands on
+no branch. Move the local branch up to the merge when it can fast-forward, and
+stay detached when it cannot:
 
     merged=$(git rev-parse HEAD) \
       && { git switch <headRefName> && git merge --ff-only "$merged" \

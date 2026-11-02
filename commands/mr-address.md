@@ -49,8 +49,15 @@ once it has opened the file at that sha and checked.
 
 ## Push to the GitLab remote
 
-    eval "$(~/.claude/scripts/gitlab-remote.sh)" && git push "$GITLAB_REMOTE" "HEAD:$(glab api \
-      "projects/$GITLAB_PROJECT/merge_requests/$ARGUMENTS" | jq -r .source_branch)"
+    eval "$(~/.claude/scripts/gitlab-remote.sh)" \
+      && source_branch=$(glab api "projects/$GITLAB_PROJECT/merge_requests/$ARGUMENTS" \
+           | jq -er .source_branch) \
+      && git push "$GITLAB_REMOTE" "HEAD:$source_branch"
+
+Resolve the branch on its own line and stop if it fails. On a 401 or 404
+`glab api` still prints the error body, `jq -r` turns the missing field into
+`null`, and the push creates a branch called `null` on GitLab. `jq -e` exits
+non-zero on `null`, so the push never runs.
 
 Name the destination branch: a conflicts round can leave the checkout detached,
 and `git push "$GITLAB_REMOTE" HEAD` then fails with `Did you mean to create a
