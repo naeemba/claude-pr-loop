@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Work out which remote is the GitLab one, and print what every GitLab command
 # needs from it. One place, because several repos keep GitHub on `origin` and
-# GitLab on a second remote (`arr`, `gitlab`) -- guess wrong and a review posts
+# GitLab on a second remote (`gitlab`, `work`) -- guess wrong and a review posts
 # nothing, or a fix pushes to a mirror the merge request cannot see.
 #
 #   eval "$(gitlab-remote.sh)"   # sets GITLAB_REMOTE, GITLAB_HOST, GITLAB_PROJECT

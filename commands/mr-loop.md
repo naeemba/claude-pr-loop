@@ -9,20 +9,23 @@ Call the `Workflow` tool with:
 - `scriptPath`: the ABSOLUTE path to `pr-loop.js` — your home directory followed
   by `/.claude/workflows/pr-loop.js`. The Workflow tool does not expand `~`.
 - `args`: `{ "pr": "$ARGUMENTS", "forge": "gitlab" }` — plus any of `stopAt`,
-  `maxRounds`, `startAt` and `worktree`, which mean exactly what they mean for
-  `/pr-loop`; see that file for each. **`forge` is not optional here**: leave it
-  out and every round runs the GitHub commands and `gh` against a project that
-  has no pull requests.
+  `maxRounds`, `startAt`, `worktree`, `reviewModel`, `fixModel` and
+  `conflictsModel`, which mean exactly what they mean for `/pr-loop`; see that
+  file for each. **`forge` is not optional here**: leave it out and every round
+  runs the GitHub commands and `gh` against a project that has no pull
+  requests.
 
 This is explicit user opt-in for multi-agent orchestration — they invoked this slash command.
 
 It is the same workflow `/pr-loop` runs; `forge: "gitlab"` only swaps which
 command file each round executes — `/mr-review`, `/mr-rereview`, `/mr-address`
-instead of their `pr-` twins — and which script lists the open threads. Rounds,
+instead of their `pr-` twins — which script lists the open threads, and how the
+conflict step asks about conflicts (`has_conflicts` on the MR, not `gh pr view`). Rounds,
 counts, the severity floor and every stopping rule are identical.
 
 Read `~/.claude/commands/pr-loop.md` for the rest: the review dimensions, the
-severity floor and what each final status means. All of it applies unchanged.
+severity floor, the conflict step that runs before the loop, and what each final
+status means. All of it applies unchanged.
 Two words differ — pull request is merge request, and the number is the MR's
 project-scoped **iid**, the `!123` a human sees.
 
@@ -45,6 +48,6 @@ If it fails, stop and say so. A loop whose every round cannot reach the forge
 burns twelve agents to report the same connection error.
 
 > NOTE: the per-round subagent prompts live in `~/.claude/workflows/pr-loop.js`
-> and execute the `/mr-review`, `/mr-rereview` and `/mr-address` command bodies
-> verbatim, which in turn execute their `pr-` twins with the forge translated.
+> and execute the `/mr-conflicts` (first, before any round), `/mr-review`,
+> `/mr-rereview` and `/mr-address` command bodies verbatim, which in turn execute their `pr-` twins with the forge translated.
 > Keep the script and these command files in sync when either changes.

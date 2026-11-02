@@ -39,49 +39,47 @@ opinion of its own work.
 | File | Role |
 |---|---|
 | `review/standard.md` | **The review standard.** What to look for, how to verify it, how to grade it. All four review commands read this one file. |
-| `commands/pr-review.md` | Initial review. Shards the diff, runs every angle over every shard in parallel, verifies each candidate, posts inline comments. |
+| `commands/pr-review.md` | Initial review. Shards the diff, runs up to four grouped finders and at least one verifier per shard (one agent working through it all inside `/pr-loop`), posts inline comments. |
 | `commands/pr-address.md` | Fixes valid comments, rejects invalid ones with a reason. Replies with the commit SHA. Never resolves threads. |
 | `commands/pr-rereview.md` | Verifies each fix against the code at that SHA, resolves what's genuinely fixed, reviews what the fixes broke. |
-| `commands/pr-loop.md` | Chains all three via the workflow. |
-| `commands/mr-*.md` | The GitLab four. Each reads its `pr-` twin and translates `gh` to `glab`; nothing about the review itself changes. |
+| `commands/pr-conflicts.md` | Merges the base branch into a conflicting PR and resolves by hand. Never rebases. The loop runs it before round 1. |
+| `commands/pr-loop.md` | Chains all of them via the workflow. |
+| `commands/mr-*.md` | The GitLab five. Each reads its `pr-` twin and translates `gh` to `glab`; nothing about the review itself changes. |
 | `workflows/pr-loop.js` | The loop engine, shared by both forges. Spawns one fresh subagent per role per round and decides when to stop. |
 | `scripts/pr-unresolved-threads.sh` | Prints a PR's unresolved review threads as JSON. |
 | `scripts/mr-unresolved-threads.sh` | The same for a GitLab MR. |
 | `scripts/gitlab-remote.sh` | Works out which remote is the GitLab one, for repos that keep GitHub on `origin` and GitLab on a second remote. |
-| `scripts/create-task.js` | Optional. Files an out-of-scope finding as a card on a `.dashboard/board.json` project board. Skip it and the review says so instead. |
+| `install.sh` | Links all of the above into `~/.claude`, one file at a time. |
+| `tests/`, `install.test.sh` | Self-checks for the workflow, the GitLab thread lister and the install script. |
 
-The six review commands work standalone. You don't need the loop to use them.
+The review, re-review, address and conflicts commands work standalone. You don't need the loop to use them.
 
 ## Install
 
-Requires [Claude Code](https://claude.com/claude-code) and `jq`, plus `gh`
-(authenticated) for GitHub and `glab` for GitLab.
+Requires [Claude Code](https://claude.com/claude-code) with workflows available,
+`jq`, plus `gh` (authenticated) for GitHub and `glab` for GitLab.
 
 ```bash
 git clone https://github.com/naeemba/claude-pr-loop.git
 cd claude-pr-loop
-
-mkdir -p ~/.claude/commands ~/.claude/workflows ~/.claude/scripts ~/.claude/review
-cp commands/*.md      ~/.claude/commands/
-cp workflows/*.js     ~/.claude/workflows/
-cp scripts/*.sh       ~/.claude/scripts/
-cp scripts/*.js       ~/.claude/scripts/
-cp review/*.md        ~/.claude/review/
-chmod +x ~/.claude/scripts/*.sh ~/.claude/scripts/create-task.js
+./install.sh
 ```
 
-Or symlink them, if you keep your Claude config in a dotfiles repo:
-
-```bash
-ln -sf "$PWD"/commands/*.md  ~/.claude/commands/
-ln -sf "$PWD"/workflows/*.js ~/.claude/workflows/
-ln -sf "$PWD"/scripts/*      ~/.claude/scripts/
-ln -sf "$PWD"/review/*.md    ~/.claude/review/
-```
+`install.sh` symlinks each command into `~/.claude/commands/`, the workflow into
+`~/.claude/workflows/`, the standard into `~/.claude/review/` and the helper
+scripts into `~/.claude/scripts/`. Links point back at the checkout, so `git
+pull` is the update. Anything of yours already in those folders stays; a real
+file where one of these goes is moved aside as `<name>.backup-<timestamp>`.
+Re-running it also removes links to files this checkout no longer has.
 
 The paths matter: the commands read `~/.claude/review/standard.md` by name, and
-the workflow reads the command files out of `~/.claude/commands`. Put them
-somewhere else and edit those references.
+the workflow reads the command files out of `~/.claude/commands`.
+
+**Why not a Claude Code plugin?** A plugin can ship commands and workflows, but
+its commands are always namespaced — `/claude-pr-loop:pr-loop`, never `/pr-loop`
+([plugin components](https://code.claude.com/docs/en/plugins/components.md)).
+Plain user commands keep the short names, and the command files keep reading
+each other at fixed paths.
 
 Then, from inside any repo:
 
@@ -89,10 +87,36 @@ Then, from inside any repo:
 /pr-review 512      # review only
 /pr-address 512     # fix the open comments
 /pr-rereview 512    # verify the fixes, resolve the threads
+/pr-conflicts 512   # merge the base in if it conflicts
 /pr-loop 512        # all of the above, on repeat
 ```
 
-and the `mr-` four for GitLab.
+and the `mr-` five for GitLab.
+
+## Configuration
+
+Everything is optional. Environment variables go in the `env` block of
+`~/.claude/settings.json`, so every session and subagent sees them.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `PR_LOOP_CARD_SCRIPT` | unset | Path to an executable that files one card on your project board; a leading `~/` is fine. When set, each out-of-scope finding also becomes a card — the flags it is called with are in the "Out-of-scope findings" section of `review/standard.md`. Unset, the review files the follow-up issue only and says so. |
+| `GITLAB_REMOTE` | found | The git remote that is the GitLab one. Normally worked out by `gitlab-remote.sh`. |
+| workflow options | see [Options](#options) | Per run: `/pr-loop {"pr": 512, "stopAt": "nit"}`. |
+
+### Models per role
+
+| Role | Runs | Model and effort |
+|---|---|---|
+| Review, re-review rounds | `/pr-review`, `/pr-rereview` | `opus`, high — pinned, so a cheaper session can't downgrade the rounds that decide what's wrong. `reviewModel` overrides. |
+| Fix rounds | `/pr-address` | The session's own model and effort. `fixModel` overrides; a pinned model runs at low effort. |
+| Conflict step | `/pr-conflicts` | The session's own. `conflictsModel` overrides; a pinned model runs at low effort. |
+| Standalone `/pr-review`, `/pr-rereview` | frontmatter | `opus`, high. |
+| Standalone `/pr-address`, `/pr-conflicts` | frontmatter | `sonnet`, low. |
+| Finders inside a standalone review | `review/standard.md` | Correctness and security/performance on `opus`; patterns, structure, names, reuse, layout and tests on `sonnet`. Verifiers on `opus`. |
+| `/pr-loop` itself | — | The session that typed it. |
+
+The same holds for the `mr-` commands.
 
 ## GitLab
 
@@ -124,6 +148,8 @@ failing.
 `pr-loop.js` runs up to 6 rounds. After each review round it asks the subagent
 for counts, then decides for itself:
 
+- **`conflicts-unresolved`** — the conflict step found a conflict it would not
+  guess at and left it open. No round ran; a person has to pick a side.
 - **`converged`** — zero unresolved threads. Done.
 - **`floor-addressed`** — everything left is at or below the severity floor
   (default `low`). The final fix round still runs and takes that tail; what
@@ -135,6 +161,8 @@ for counts, then decides for itself:
   the only threads left are a human's comments that a previous round already
   answered and deliberately won't re-argue.
 - **`max-rounds-hit`** — 6 rounds elapsed.
+- **`agent-error`** — a round's agent failed three times. The result still
+  lists every commit earlier rounds pushed.
 
 Four details that matter more than they look:
 
@@ -174,14 +202,30 @@ Pass an object instead of a bare number:
 | `maxRounds` | `6` | The round cap. |
 | `startAt: "rereview"` | — | Begin round 1 with `/pr-rereview`. For a change whose findings were already fixed elsewhere: without it, round 1 reviews the fixed head from scratch and the fix agent burns itself replying to duplicates it just made. |
 | `worktree: true` | — | Run every round's agent in its own git worktree, so the loop never touches the branch you have checked out. |
+| `reviewModel` | `opus` | Model for review rounds. `null`, `"session"` or `"inherit"` puts them on the session's model and effort. |
+| `fixModel` | `inherit` | Model for fix rounds. |
+| `conflictsModel` | `inherit` | Model for the conflict step. |
 | `forge: "gitlab"` | `github` | Set by `/mr-loop`. Not optional there. |
+
+### Conflicts first
+
+Before round 1, one agent asks the forge whether the change conflicts with its
+base. If it does, it merges the base in — never a rebase, which would drop every
+inline thread — resolves by hand, runs the repo's checks and pushes. The rounds
+then review the merge like any other commit. If it can't tell which side wins,
+it aborts and the run stops with `conflicts-unresolved`.
 
 ## The review
 
-`pr-review` reads the changed file list, groups it into shards of at most 15
-along real seams (schema, repository, logic, routes, components, tests), and runs
-every angle over every shard in parallel — one agent per (angle × shard). A
-100-file change gets ~7 shards, not one agent skimming everything.
+`pr-review` reads the changed line count per file and packs it into shards of
+about 800 changed lines along real seams (schema, repository, logic, routes,
+components, tests). Each shard gets up to four finder agents — the angles are
+grouped so the same code isn't read nine times — and at least one verifier. A big change
+gets several shards, not one agent skimming everything. It prints the agent count
+first and asks before going over 60.
+
+Inside a `/pr-loop` round there is no fan-out: a subagent can't launch agents, so
+the round works through the shards and groups itself and says so.
 
 The angles, all of them in `review/standard.md`:
 
@@ -207,8 +251,8 @@ The angles, all of them in `review/standard.md`:
    reads, work repeated every render or request, long work inline in a handler.
    Only what the diff introduces; not micro-optimisation.
 
-Every candidate then goes to a **verifier agent** that returns CONFIRMED,
-PLAUSIBLE or REFUTED against the repo as it actually stands. REFUTED gets
+Candidates are merged by root cause, then each shard's **verifier agent** returns
+CONFIRMED, PLAUSIBLE or REFUTED for each one against the repo as it actually stands. REFUTED gets
 dropped. This is what stops the review inventing a violation of a convention the
 repo doesn't have.
 
@@ -231,10 +275,9 @@ but it's collected into one follow-up issue instead of being fixed here. "The
 rest of the repo doesn't follow the new convention yet" is always out-of-scope;
 introducing a convention doesn't oblige a change to sweep the codebase.
 
-Out-of-scope findings then leave twice: one issue holding all of them as the
-digest, and one board card each as the work queue. The cards are the optional
-part — `create-task.js` writes to a `.dashboard/board.json` on the repo's main
-branch, and if there isn't one, the review says so in its summary and moves on.
+Out-of-scope findings then leave the review: one issue holding all of them as the
+digest, and — when `PR_LOOP_CARD_SCRIPT` is set — one board card each as the
+work queue. The fix rounds never touch them.
 
 ## Things you'll probably want to change
 
@@ -259,16 +302,23 @@ disappearing from the unresolved list looks identical to a verified one.
 they post nothing, open no issue, resolve nothing, and return the findings
 instead. Useful for a dry run on someone else's change.
 
-**Drop the board.** If you don't keep a `.dashboard/board.json`, delete the
-"Out-of-scope findings leave twice" section's step 2 from `review/standard.md`
-and skip `create-task.js`. The issue on its own is a fine digest.
-
 ## Cost
 
-The loop is not cheap. One round is a review fan-out (angles × shards, plus a
-verifier per candidate) followed by a fix agent. A large change over several
+The loop is not cheap. Standalone, a review is up to four finders plus at least one verifier
+per shard (one per ~15 candidates). Inside `/pr-loop` each round is one review agent followed by one fix
+agent. A large change over several
 rounds is a lot of tokens. Run `/pr-review` on its own first to see what you're
 in for before reaching for `/pr-loop`.
+
+## Tests
+
+```bash
+node --test tests/pr-loop.test.js
+./install.test.sh
+tests/mr-unresolved-threads.test.sh
+```
+
+None of them need a network, `gh` or `glab`.
 
 ## License
 

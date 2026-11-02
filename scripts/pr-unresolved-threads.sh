@@ -26,9 +26,9 @@ while :; do
   args=(-F owner="$owner" -F name="$name" -F pr="$pr")
   [ -n "$cursor" ] && args+=(-F cursor="$cursor")
   page=$(gh api graphql "${args[@]}" -f query="$query")
-  threads=$(jq --argjson page "$page" \
-    '. + ($page.data.repository.pullRequest.reviewThreads.nodes | map(select(.isResolved | not)))' \
-    <<<"$threads")
+  # Through stdin, not --argjson: a page outgrows the 128 KiB argument limit.
+  threads=$(printf '%s\n%s' "$threads" "$page" | jq -s \
+    '.[0] + (.[1].data.repository.pullRequest.reviewThreads.nodes | map(select(.isResolved | not)))')
   hasNext=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<<"$page")
   [ "$hasNext" = "true" ] || break
   cursor=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor' <<<"$page")

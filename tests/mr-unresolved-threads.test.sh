@@ -2,22 +2,22 @@
 # Self-check for mr-unresolved-threads.sh. Stubs `glab` with a fixed discussions
 # payload and a throwaway repo, so it runs with no network, no glab and no
 # GitLab. Run it after touching the sed or jq in that script.
-#   ./mr-unresolved-threads.test.sh
+#   tests/mr-unresolved-threads.test.sh
 set -euo pipefail
 cd "$(dirname "$0")"
-script=$PWD/mr-unresolved-threads.sh
+script=$PWD/../scripts/mr-unresolved-threads.sh
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 cat > "$work/discussions.json" <<'JSON'
 [
  {"id":"aaa1","notes":[
-   {"id":1,"body":"open","author":{"username":"naeem"},"resolvable":true,"resolved":false,
+   {"id":1,"body":"open","author":{"username":"alice"},"resolvable":true,"resolved":false,
     "position":{"new_path":"src/a.ts","new_line":42}},
    {"id":2,"body":"reply","author":{"username":"bob"},"resolvable":true,"resolved":false,
     "position":{"new_path":"src/a.ts","new_line":42}}]},
  {"id":"bbb2","notes":[
-   {"id":3,"body":"already fixed","author":{"username":"naeem"},"resolvable":true,"resolved":true,
+   {"id":3,"body":"already fixed","author":{"username":"alice"},"resolvable":true,"resolved":true,
     "position":{"new_path":"src/b.ts","new_line":7}}]},
  {"id":"ccc3","notes":[
    {"id":4,"body":"plain MR comment","author":{"username":"bob"},"resolvable":false,"resolved":false,
@@ -43,7 +43,7 @@ chmod +x "$work/bin/glab"
 
 git init -q "$work/repo"
 git -C "$work/repo" remote add origin git@github.com:mirror/thing.git
-git -C "$work/repo" remote add arr git@git.example.lan:group/sub/thing.git
+git -C "$work/repo" remote add work git@git.example.lan:group/sub/thing.git
 
 actual=$(cd "$work/repo" && PATH="$work/bin:$PATH" bash "$script" 123)
 called=$(cat "$work/called")

@@ -20,10 +20,20 @@ Call the `Workflow` tool with:
   - `worktree: true` — run every round's agent in its own git worktree, so the
     loop never touches the branch checked out in the working copy. Use it when
     you want to keep working while the loop runs.
+  - `reviewModel` / `fixModel` / `conflictsModel` — the model (and, with it, the
+    effort) each kind of round runs at. `reviewModel` defaults to `opus` at
+    high effort and stays pinned so a cheaper parent session cannot quietly
+    downgrade the only rounds deciding what is wrong with the code.
+    `fixModel` and `conflictsModel` default to `inherit` — same model and
+    effort as the session that typed `/pr-loop`. Pass an explicit tier (`sonnet`, `opus`, …) to pin those rounds,
+    at low effort;
+    pass `null`, `"session"` or `"inherit"` for `reviewModel` to put review on
+    the session too. This command file itself has no `model`/`effort`
+    frontmatter and always runs on the session that typed `/pr-loop`.
 
 This is explicit user opt-in for multi-agent orchestration — they invoked this slash command.
 
-The workflow runs one fresh-context subagent per role per round (review in round 1, re-review after, then fix), looping until a review round leaves zero unresolved threads on the PR, only threads at or below the severity floor remain (one last fix pass, then stop), a fix round makes zero progress, or 6 rounds elapse.
+The workflow runs one fresh-context subagent per role per round (review in round 1, re-review after, then fix), looping until a review round leaves zero unresolved threads on the PR, only threads at or below the severity floor remain (one last fix pass, then stop), a fix round makes zero progress, or 6 rounds elapse. It also ends before any round starts when the conflict step leaves a conflict open (see Conflicts below).
 
 ## Review dimensions
 
@@ -75,25 +85,46 @@ cost: tag `low` something that is really `medium` and the loop fixes it in the
 final round, in a small diff with nothing after it to check. That is the trade
 being made deliberately — it buys a round per run.
 
+## Conflicts
+
+Before the first review, one agent asks the forge whether the PR conflicts with
+its base branch. If it does, the agent merges the base branch in and resolves the
+conflicts by hand. The rounds then review and fix the merged code, so the merge
+commit never lands on the branch with no review behind it.
+
+The rules for that merge live in `pr-conflicts.md` — merge never rebase, keep
+both sides, abort rather than guess. Do not restate them here.
+
+If the agent aborts and leaves a conflict open, the run stops there with status
+`conflicts-unresolved` and no rounds. A person has to pick a side first, and
+reviewing code that is about to change wastes every round.
+
+The base branch keeps moving while the rounds run. A long run can still end on a
+PR that conflicts again. The loop does not check a second time.
+
 > NOTE: the per-round subagent prompts live in `~/.claude/workflows/pr-loop.js`
-> and execute the `/pr-review`, `/pr-rereview` and `/pr-address` command
-> bodies verbatim. Keep the script and these command files in sync when either
-> changes.
+> and execute the `/pr-review`, `/pr-rereview`, `/pr-address` and `/pr-conflicts`
+> command bodies verbatim. Keep the script and these command files in sync when
+> either changes.
+
+Summarize from the returned result alone: `history` holds counts per agent,
+`commitShas` every commit. Do not open the task output files.
 
 When the workflow returns, summarize:
-- Final status (`converged` / `floor-addressed` / `stopped-at-floor` / `no-progress` / `max-rounds-hit`)
+- Final status (`conflicts-unresolved` / `converged` / `floor-addressed` / `stopped-at-floor` / `no-progress` / `max-rounds-hit` / `agent-error`)
 - Number of rounds run
-- Total commits pushed across all fix rounds
+- The commits pushed, from `commitShas`. On `agent-error`, lead with these:
+  they are on the branch, and the round meant to review them never ran.
 - Anything notable from the round history
 
 `floor-addressed` is the normal quiet ending: only a tail at or below `stopAt`
 was left — name the actual floor from the result, since it may be higher than
 the `low` default — the final fix pass took it, and no re-review followed. List
-every thread in
-`floorThreads` — path, line, tag, what it asks for — and mark the ones named in
-`rejectedThreads` as rejected, with the reason given there. Those are still open.
-Give `addressed`/`rejected` too: if both are zero, the final round did nothing
-and every thread on the list is untouched — say that outright. Say plainly that
+every thread in `floorThreads` — path, line, tag, what it asks for — and mark
+the ones named in the last `history` entry's `rejectedThreads` as rejected,
+with the reason given there. Those are still open. Give that entry's
+`addressed`/`rejected` too: if both are zero, the final round did nothing and
+every thread on the list is untouched — say that outright. Say plainly that
 nothing verified those last commits, and that the diff is worth a glance.
 
 `stopped-at-floor` now means only the narrow case: nothing above the floor and
@@ -109,3 +140,17 @@ are ones a fix round already rejected and deliberately did not re-argue. Those a
 usually a human's comments, which `/pr-address` replies to but never resolves.
 Name them — the run ended because it had nothing left to say, not because the PR
 is clean.
+
+Report `conflicts` in every summary, in one line when there is nothing to say:
+
+- `hadConflicts: false` — "no conflict with the base branch". Say it; silence
+  reads as "nobody checked".
+- `resolved: true` — name the files from `files` and say what `checks` ran. The
+  rounds that followed reviewed this merge.
+- `hadConflicts: true, resolved: false` — status is `conflicts-unresolved` and no
+  round ran. Lead with that and quote the summary: the PR needs a person before
+  the loop is worth running.
+- `hadConflicts: null` — the forge was still computing after the retries, so the
+  answer is unknown. Say that, not "no conflict".
+- `conflicts: null` — the conflict agent failed, so nobody checked. The rounds ran
+  anyway. Say so plainly rather than leaving it out.

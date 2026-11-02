@@ -1,6 +1,8 @@
 ---
 description: Uncapped PR review — bugs, security, performance, structure, frontend layout, naming, test value; one comment per root cause
 argument-hint: <pr-number>
+model: opus
+effort: high
 ---
 
 Review PR #$ARGUMENTS.
@@ -18,17 +20,18 @@ This file adds three things: what to fetch, how to shard it, and how to post.
 
 ## Coverage — shard the diff
 
-Read `gh pr diff $ARGUMENTS --name-only` first. Group the changed files into
-shards of at most 15, split along real seams (schema, repository/dao, logic,
-routes, components, tests). A 100-file PR gets ~7 shards, not one agent skimming
-everything. Then run every angle over every shard as the standard describes.
+Read `gh api --paginate repos/{owner}/{repo}/pulls/$ARGUMENTS/files --jq '.[] |
+"\(.filename) \(.additions + .deletions)"'` first — it gives the changed line
+count per file, which the standard's shard size is measured in. Shard, group, route
+and verify exactly as "Running the angles" and "Verify before posting" in the
+standard say. A big PR gets several shards, not one agent skimming everything.
 
 ## Posting
 
-Post each finding as an inline comment on the PR. Prefer
-`mcp__github_inline_comment__create_inline_comment`; if it is not available,
-use `gh api repos/{owner}/{repo}/pulls/$ARGUMENTS/comments` with `commit_id`,
-`path`, `line` and `side: RIGHT`. When the finding is about a file rather than
+Post each finding as an inline comment on the PR, with
+`gh api repos/{owner}/{repo}/pulls/$ARGUMENTS/comments` using `commit_id`,
+`path`, `line` and `side: RIGHT` (or `mcp__github_inline_comment__create_inline_comment`
+when that plugin is enabled). When the finding is about a file rather than
 a line (layout, a file that should be split), post with `subject_type: file`.
 Include a suggestion block only when it fully fixes the issue.
 
