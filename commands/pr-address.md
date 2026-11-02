@@ -1,6 +1,8 @@
 ---
 description: Address review comments on a PR — fix valid ones, reject invalid ones with explanation
 argument-hint: <pr-number>
+model: sonnet
+effort: low
 ---
 
 Check PR #$ARGUMENTS. There are review comments — go through each one:
@@ -29,6 +31,18 @@ unresolved list looking identical to a verified one.
   "pre-existing" only counts if you say where it is handled instead. If you
   cannot write that sentence, it is not a rejection — fix it.
 
+## Never fix an `[out-of-scope]` thread
+
+`[out-of-scope]` is defined under "Scope" in `~/.claude/review/standard.md`.
+The reviewer has already filed such a thread as later work, so changing the
+code here means a large diff that nobody asked for and no round will review.
+On one PR, a fix round deleted 357 lines this way, twice. Do not edit any code
+for it. Reply once to say it is tracked as later work, and link the follow-up
+issue if the thread or the review summary gives one. Then leave it open and
+count it as rejected. If an in-scope comment lists unchanged paths marked
+out-of-scope, fix the instances in the changed files and leave the listed paths
+alone.
+
 ## Fetch ONLY unresolved threads
 
 Run `~/.claude/scripts/pr-unresolved-threads.sh $ARGUMENTS` (inside the repo) —
@@ -43,4 +57,5 @@ After fixing a comment, grep the PR's other changed files for the same pattern
 and fix every occurrence in the same commit — a missing `catch`, a guard added
 to one dialog but not its sibling, a helper deduplicated in one file and left
 inline in another. Reviewers keep re-finding the same hole in sibling files
-rounds later; one sweep now kills the whole class.
+rounds later; one sweep now kills the whole class. The sweep stays inside the
+files this PR already changed.

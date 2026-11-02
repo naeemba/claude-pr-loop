@@ -28,10 +28,11 @@ only thing that shrinks the list is deduplication:
 
 ## Angles
 
-Run EVERY angle over EVERY shard, one agent per (angle × shard), in parallel.
-Each agent returns candidates as `file`, `line`, `summary`, `failure_scenario`
-(the concrete cost: what breaks, what is duplicated, what gets harder), and
-which angle flagged it.
+Every angle runs over every shard it can find something in. "Running the
+angles" below says how angles are grouped into agents and which shards each
+group gets. Each agent returns candidates as `file`, `line`, `summary`,
+`failure_scenario` (the concrete cost: what breaks, what is duplicated, what
+gets harder), and which angle flagged it.
 
 ### 1. Correctness
 Bugs, side effects, broken paths, missing guards, state that can go stale.
@@ -145,6 +146,71 @@ Not micro-optimisation.
 - **Long work inline in a handler** that belongs in a background job, so the
   request holds the connection open while it runs.
 
+## Running the angles
+
+One agent per angle per shard is what made a big review cost 130 finders and
+400 verifiers. The rules below keep every angle and every finding, and stop the
+same code being read dozens of times.
+
+### Shards — by diff size, not file count
+
+Aim for about 800 changed lines per shard, split along real seams (schema,
+repository/dao, logic, routes, components, tests). Twenty files of one-line
+import changes are one shard, not two. One 1,500-line file is a shard on its
+own.
+
+Leave out lockfiles, generated files, snapshots and build output. Migrations
+stay in, in the schema shard — a migration that drops a column loses data.
+
+### Four groups per shard, not nine agents
+
+| Group | Angles | Model |
+|---|---|---|
+| A | 1 Correctness | `opus` |
+| B | 8 Security, 9 Performance | `opus` |
+| C | 2 Existing patterns, 3 Structure, 5 Names, 7 Reuse | `sonnet` |
+| D | 4 Frontend layout, 6 Test value | `sonnet` |
+
+Correctness gets an agent to itself so nothing else competes for its attention.
+Each agent in a group works through every angle it holds in full, one after
+another, and tags each candidate with the angle that found it. Pass the model
+on the agent call; the finders do not inherit the session's.
+
+### Run a group only where it can find something
+
+| Shard kind | Groups |
+|---|---|
+| Components, pages | A, B, C, D |
+| Repository/dao, logic, routes, server actions, scripts | A, B, C, D |
+| Tests only | A, C, D |
+| Schema, config, anything else | A, B, C |
+
+Group D runs on server code too. Angle 6 flags a new branch with no test, and
+that branch lives in logic, not in a test file. Angle 4 flags a hardcoded path
+in a revalidate call, and that call lives in a server action.
+
+A shard mixing kinds gets every group any of its kinds gets. When unsure, run
+the group.
+
+### Find the reference feature once
+
+Before any finder starts, find the canonical reference for angle 2 — one per
+kind of thing the change adds (a route, a form, a dao) — and hand those names to
+every group C agent. They do not search for it again. One that thinks the
+reference is wrong for its shard says so in a candidate.
+
+### Say the cost before starting
+
+Print the plan first: shard count, groups per shard, finder agents, and
+verifier agents (at least one per shard, see below). Add them up. Above 60 in
+total, stop and ask before launching.
+
+A `/pr-loop` or `/mr-loop` round is different. It runs as a subagent, and a
+subagent has no tool to launch more agents. So the round launches nothing and
+prints no agent plan. It works through the shards and groups itself, one after
+another, then checks its own candidates. Its summary says it ran as a single
+agent, so nobody reads it as a full sharded review.
+
 ## When the rule isn't written down
 
 - Post the finding anyway, and add one line proposing where to record it —
@@ -157,9 +223,24 @@ Not micro-optimisation.
 
 ## Verify before posting
 
-Every candidate goes to a verifier agent with the diff, the relevant files, and
-the candidate. It returns exactly one of **CONFIRMED / PLAUSIBLE / REFUTED**.
-Keep CONFIRMED and PLAUSIBLE; drop REFUTED. A structure candidate is verified
+**Merge first, then verify.** Group the raw candidates by root cause before any
+verifier runs. The same missing check found by three angles in ten files is one
+candidate listing all ten places, and it is verified once.
+
+**One verifier per shard, not per candidate.** Give it the shard's diff, the
+relevant files, and every merged candidate whose clearest instance sits in that
+shard. For a changed function, the relevant files include its callers — a change
+that reads as self-contained in the diff is the one whose call sites are all
+outside it. It returns exactly one of **CONFIRMED / PLAUSIBLE / REFUTED** per
+candidate. Keep CONFIRMED and PLAUSIBLE; drop REFUTED. Give a shard one
+verifier per about 15 candidates: 45 candidates get three verifiers, not two.
+Verifiers run on `opus`.
+
+**Nits and names skip the verifier.** A `nit`, an angle-5 name, or an eslint-rule
+proposal is checked by looking at the line. Do that yourself and drop the ones
+that are wrong. Everything else goes to a verifier.
+
+A structure candidate is verified
 against the repo as it exists — does the destination folder or wrapper actually
 exist, is the reference file really the cleaner one, is the claim true after
 this change's own moves. Never post a finding about a line the change did not
@@ -190,27 +271,28 @@ In-scope findings carry the severity tag alone. Out-of-scope findings add
 ## Out-of-scope findings leave twice — the issue, then the board
 
 An out-of-scope finding is not this change's job, so it needs somewhere to live
-that outlasts it. Two places, in this order, once the review is posted.
+that outlasts it. One place always, a second when a board is set up, in this
+order, once the review is posted.
 
 **1. One issue.** Collect every out-of-scope finding into ONE `gh issue create`
 on this repo, grouped by severity, highest first. Link it from the review
 summary.
 
-**2. One board card per finding.** For each out-of-scope finding, run this from
-inside the repo:
+**2. One board card per finding — only when a card script is configured.**
+Check `printenv PR_LOOP_CARD_SCRIPT`. Empty means no board: skip this step,
+create no cards, and say "no card script configured" in the summary. Otherwise
+it names an executable that files one card on the project's board. For each
+out-of-scope finding, run it from inside the repo:
 
-    node ~/.claude/scripts/create-task.js \
+    "$PR_LOOP_CARD_SCRIPT" \
       --title "<the finding's one-line summary>" \
       --notes "<the comment body, the concrete cost, then the issue and review links>" \
       --priority <from the table>
 
-Once per finding, not once per review — the issue is the digest, the board is
-the work queue. The findings are already deduped to one per root cause, so this
-is a handful of cards, not one per occurrence.
-
-The script pushes each card straight to the repository's main branch using git
-plumbing. It does not switch branches and does not touch the working tree, the
-index, or HEAD, so running it mid-review cannot disturb anything checked out.
+Pass those flags and nothing else; the command file adds `--remote` where the
+forge needs it. Once per finding, not once per review — the issue is the
+digest, the board is the work queue. The findings are already deduped to one
+per root cause, so this is a handful of cards, not one per occurrence.
 
 | Severity | Card priority |
 |---|---|
@@ -222,9 +304,8 @@ index, or HEAD, so running it mid-review cannot disturb anything checked out.
 Every card's notes end with the issue URL and the review URL. A card picked up
 weeks later must still say where it came from without anyone hunting for it.
 
-If the script reports that the branch has no `.dashboard/board.json`, stop
-creating cards and say so in the summary. Do NOT pass `--seed`: a review is not
-the moment to publish a new board to main.
+If the script fails or reports it has nowhere to file the card (the repo has no
+board, say), stop creating cards and say so in the summary, quoting its message.
 
 ## Severity — tag every finding
 

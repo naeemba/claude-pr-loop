@@ -1,6 +1,8 @@
 ---
 description: Uncapped re-review after fix commits — verify each fix, resolve the thread, catch what the fixes broke
 argument-hint: <pr-number>
+model: opus
+effort: high
 ---
 
 On PR #$ARGUMENTS there are new commits fixing earlier findings. Re-review.
@@ -40,9 +42,20 @@ like, not a reason to skip it. Follow the code to where it went.
 ## Coverage — shard the new commits
 
 Diff the fix commits against the previously reviewed sha, not the whole PR.
-Group the changed files into shards of at most 15 along real seams (schema,
-repository, logic, routes, components, tests), then run every angle over every
-shard as the standard describes.
+Shard, group, route and verify that diff exactly as "Running the angles" and
+"Verify before posting" in the standard say.
+
+**When the range holds a merge of the base branch**, a plain diff of it holds
+every line the base brought in — other people's merged work, not fixes. The
+loop merges the base in before round 1 when the PR conflicts, so this is the
+normal case there. Review two things instead, and nothing else from the merge:
+
+- the branch's own commits:
+  `git log --first-parent --no-merges -p <previous sha>..HEAD`
+- what each merge itself changed, which is only how its conflicts were
+  resolved: `git show --remerge-diff <merge sha>`
+
+Never post a finding on a line that only arrived with the base branch.
 
 A fix that moved a lot of code counts as new code. Review the destination, not
 just the diff of the move.
@@ -102,10 +115,14 @@ The table and the rules in the standard are unchanged. On top of them:
   script.
 - **Unresolved threads:** reply saying what is still missing, and leave the
   thread open.
-- **New findings:** inline comments. Prefer
-  `mcp__github_inline_comment__create_inline_comment`; otherwise
-  `gh api repos/{owner}/{repo}/pulls/$ARGUMENTS/comments` with `commit_id`,
-  `path`, `line` and `side: RIGHT`. For a finding about a file rather than a
+- **`[out-of-scope]` threads:** the fix round leaves these alone by design, so
+  they never get a fix to verify. Once the follow-up issue holds the finding,
+  reply on the thread linking that issue, then resolve it. It is tracked there,
+  not on this PR, and left open it keeps the loop from ever finishing.
+- **New findings:** inline comments, with
+  `gh api repos/{owner}/{repo}/pulls/$ARGUMENTS/comments` using `commit_id`,
+  `path`, `line` and `side: RIGHT` (or `mcp__github_inline_comment__create_inline_comment`
+  when that plugin is enabled). For a finding about a file rather than a
   line, use `subject_type: file`.
 
 End with a count per tag for the new findings, highest first, split in-scope /

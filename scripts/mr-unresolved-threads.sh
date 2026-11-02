@@ -11,12 +11,12 @@
 # Output shape (one object per open thread):
 #   [{ "id": "<discussion id>",        # what `glab mr note resolve` takes
 #      "path": "src/x.ts", "line": 42, # null on an outdated thread
-#      "notes": [{ "id": 123, "body": "...", "author": "naeem" }] }]
+#      "notes": [{ "id": 123, "body": "...", "author": "alice" }] }]
 #
 # Usage: mr-unresolved-threads.sh <mr-iid> [--count]   (run inside the repo)
 #
 # gitlab-remote.sh beside this file works out which remote is the GitLab one --
-# in some repos `origin`, in others `arr` or `gitlab`, with GitHub sitting on
+# in some repos `origin`, in others `gitlab` or `work`, with GitHub sitting on
 # `origin` beside it. Set GITLAB_REMOTE to override its search.
 set -euo pipefail
 
@@ -37,7 +37,9 @@ while :; do
   batch=$(glab api \
     "projects/$GITLAB_PROJECT/merge_requests/$iid/discussions?per_page=100&page=$page")
   count=$(jq 'length' <<<"$batch")
-  threads=$(jq --argjson batch "$batch" '. + $batch' <<<"$threads")
+  # Through stdin, not --argjson: one page of a busy MR outgrows the 128 KiB
+  # limit Linux puts on a single argument ("Argument list too long").
+  threads=$(printf '%s\n%s' "$threads" "$batch" | jq -s '.[0] + .[1]')
   [ "$count" -eq 100 ] || break
   page=$((page + 1))
 done

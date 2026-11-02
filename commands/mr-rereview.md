@@ -1,6 +1,8 @@
 ---
 description: Uncapped GitLab MR re-review after fix commits — verify each fix, resolve the thread, catch what the fixes broke
 argument-hint: <mr-iid>
+model: opus
+effort: high
 ---
 
 Re-review merge request !$ARGUMENTS on GitLab: there are new commits fixing
@@ -22,8 +24,8 @@ host and project path that go with it, come from:
     eval "$(~/.claude/scripts/gitlab-remote.sh)"
 
 It sets `GITLAB_REMOTE`, `GITLAB_HOST` and `GITLAB_PROJECT` from whichever remote
-is the GitLab one — several of these repos keep GitHub on `origin` and GitLab on
-a second remote called `arr` or `gitlab`.
+is the GitLab one — some repos keep GitHub on `origin` and GitLab on
+a second remote called `gitlab` or `work`.
 
 **Run the `eval` in the same Bash call as the command that needs it, every
 time** — that is why every row below carries it as a prefix. A Bash tool call is
@@ -37,16 +39,16 @@ Then, wherever those two files reach for GitHub, use the right column.
 | They say | Do this instead |
 |---|---|
 | `~/.claude/scripts/pr-unresolved-threads.sh N` | `~/.claude/scripts/mr-unresolved-threads.sh $ARGUMENTS` |
-| `gh pr diff N --name-only` | `eval "$(~/.claude/scripts/gitlab-remote.sh)" && glab api --paginate "projects/$GITLAB_PROJECT/merge_requests/$ARGUMENTS/diffs?per_page=100" \| jq -r '.[].new_path'` |
 | `gh issue create` | `eval "$(~/.claude/scripts/gitlab-remote.sh)" && glab issue create -t "<title>" --description-file <file>` |
 | `mcp__github_inline_comment__create_inline_comment` | not available on GitLab — use the row below |
 | `gh api repos/{owner}/{repo}/pulls/N/comments` | `eval "$(~/.claude/scripts/gitlab-remote.sh)" && glab mr note create $ARGUMENTS --file <path> --line <line> -m "<body>"` |
 | reply on an existing thread | `eval "$(~/.claude/scripts/gitlab-remote.sh)" && glab mr note create $ARGUMENTS --reply <discussion-id> -m "<body>"` |
 | `resolveReviewThread` with the thread id | `eval "$(~/.claude/scripts/gitlab-remote.sh)" && glab mr note resolve $ARGUMENTS <discussion-id>` |
-| `node ~/.claude/scripts/create-task.js …` | `eval "$(~/.claude/scripts/gitlab-remote.sh)" && node ~/.claude/scripts/create-task.js --remote "$GITLAB_REMOTE" …` |
+| `"$PR_LOOP_CARD_SCRIPT" …` | `eval "$(~/.claude/scripts/gitlab-remote.sh)" && "$PR_LOOP_CARD_SCRIPT" --remote "$GITLAB_REMOTE" …` |
 
-That `--remote` matters: without it the card is pushed to `origin`, which here is
-the GitHub mirror, and the follow-up work lands on a board nobody reads.
+That `--remote` matters: without it a card script that pushes to a remote picks
+`origin`, which here is the GitHub mirror, and the follow-up work lands on a
+board nobody reads.
 
 `--paginate` and `per_page=100` are not decoration: `/diffs` hands back 20 files
 a page by default, and nothing warns you about the rest. An MR touching 60 files
