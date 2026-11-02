@@ -268,7 +268,7 @@ In-scope findings carry the severity tag alone. Out-of-scope findings add
 
 `**[medium]** [out-of-scope] The reminders form hand-rolls its select…`
 
-## Out-of-scope findings leave twice — the issue, then the board
+## Out-of-scope findings leave the review — the issue, and the board if one is set up
 
 An out-of-scope finding is not this change's job, so it needs somewhere to live
 that outlasts it. One place always, a second when a board is set up, in this

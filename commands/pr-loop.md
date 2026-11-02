@@ -25,7 +25,8 @@ Call the `Workflow` tool with:
     high effort and stays pinned so a cheaper parent session cannot quietly
     downgrade the only rounds deciding what is wrong with the code.
     `fixModel` and `conflictsModel` default to `inherit` — same model and
-    effort as the session that typed `/pr-loop`. Pass an explicit tier (`sonnet`, `opus`, …) to pin those rounds;
+    effort as the session that typed `/pr-loop`. Pass an explicit tier (`sonnet`, `opus`, …) to pin those rounds,
+    at low effort;
     pass `null`, `"session"` or `"inherit"` for `reviewModel` to put review on
     the session too. This command file itself has no `model`/`effort`
     frontmatter and always runs on the session that typed `/pr-loop`.

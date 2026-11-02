@@ -122,7 +122,7 @@ PR replies, or any other written artifact. Write as if a human authored the work
 // structured count report at the end, which the script (not the reviewer) uses
 // to decide whether the loop continues.
 //
-// NEVER_THE_LOOP is the third step's price. Telling a round it may invoke the
+// neverTheLoop is the third step's price. Telling a round it may invoke the
 // skill the command names puts every skill on its menu, and one of them is the
 // loop it is already inside. The request that started the run is relayed into
 // each round and opens "Run /pr-loop N", so a round that reaches for the menu

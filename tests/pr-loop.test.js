@@ -22,7 +22,7 @@ const runScript = new AsyncFunction('args', 'agent', 'phase', 'log', scriptBody)
 const runWith = async (args, answers) => {
   const calls = []
   const agent = async (prompt, options) => {
-    calls.push({ label: options.label, prompt })
+    calls.push({ label: options.label, prompt, options })
     if (!(options.label in answers)) throw new Error(`unexpected agent ${options.label}`)
     return answers[options.label]
   }
@@ -105,4 +105,47 @@ test('an agent error still reports the commits earlier rounds pushed', async () 
   })
   assert.equal(result.status, 'agent-error')
   assert.deepEqual(result.commitShas, ['abc1234'])
+})
+
+test('review rounds pin opus at high effort, fix and conflicts stay on the session', async () => {
+  const review = { ...cleanReview, unresolvedCommentsRemaining: 1, remainingAtOrBelowFloor: ['a.ts:1 — [low] — rename'] }
+  const fix = { summary: 'fixed', commitShas: [], addressed: 1, rejected: 0, pushed: true, rejectedThreads: [] }
+  const { calls } = await runWith('13', { conflicts: cleanMerge, 'review-r1': review, 'fix-r1': fix })
+  const byLabel = Object.fromEntries(calls.map((call) => [call.label, call.options]))
+  assert.equal(byLabel['review-r1'].model, 'opus')
+  assert.equal(byLabel['review-r1'].effort, 'high')
+  for (const label of ['conflicts', 'fix-r1']) {
+    assert.ok(!('model' in byLabel[label]), `${label} has a model`)
+    assert.ok(!('effort' in byLabel[label]), `${label} has an effort`)
+  }
+})
+
+test('a pinned fix model runs at low effort, a session review model drops both keys', async () => {
+  const review = { ...cleanReview, unresolvedCommentsRemaining: 1, remainingAtOrBelowFloor: ['a.ts:1 — [low] — rename'] }
+  const fix = { summary: 'fixed', commitShas: [], addressed: 1, rejected: 0, pushed: true, rejectedThreads: [] }
+  const { calls } = await runWith(
+    { pr: '13', fixModel: 'sonnet', reviewModel: null },
+    { conflicts: cleanMerge, 'review-r1': review, 'fix-r1': fix },
+  )
+  const byLabel = Object.fromEntries(calls.map((call) => [call.label, call.options]))
+  assert.equal(byLabel['fix-r1'].model, 'sonnet')
+  assert.equal(byLabel['fix-r1'].effort, 'low')
+  assert.ok(!('model' in byLabel['review-r1']))
+  assert.ok(!('effort' in byLabel['review-r1']))
+})
+
+test('an unknown model name is rejected before any agent runs', async () => {
+  await assert.rejects(runWith({ pr: '13', fixModel: 'gpt' }, {}), /fixModel must be/)
+})
+
+test('a conflict step that never answers still lets the rounds run', async () => {
+  const { result, calls } = await runWith('13', {
+    conflicts: null,
+    'conflicts-retry': null,
+    'conflicts-retry2': null,
+    'review-r1': cleanReview,
+  })
+  assert.equal(result.status, 'converged')
+  assert.equal(result.conflicts, null)
+  assert.ok(calls.some((call) => call.label === 'review-r1'))
 })

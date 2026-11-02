@@ -31,10 +31,10 @@ shell: the working directory carries over, exported variables do not. Run the
 | `pr-conflicts.md` says | Do this instead |
 |---|---|
 | `gh pr view N --json mergeable,...` | the `glab api` call below |
-| `"mergeable": "CONFLICTING"` | `"has_conflicts": true` |
-| `"mergeable": "UNKNOWN"` (still computing) | `"detailed_merge_status": "checking"` |
-| `git checkout <head>` / `git fetch origin <base>` / `git merge origin/<base>` | the checkout, fetch and merge below |
-| `git push origin HEAD` | the push below |
+| `"mergeable": "CONFLICTING"` | `"has_conflicts": true` or `"detailed_merge_status": "conflict"` |
+| `"mergeable": "UNKNOWN"` (still computing) | `"detailed_merge_status"` is `checking`, `unchecked` or `preparing` — `has_conflicts` reads `false` in all three, so it proves nothing until the check finishes |
+| `git fetch origin <head> <base>` / `git switch --detach origin/<head>` / `git merge origin/<base>` | the fetch, switch and merge below |
+| `git push origin HEAD:<head>` | the push below |
 
 ## Ask the forge
 
@@ -42,15 +42,16 @@ shell: the working directory carries over, exported variables do not. Run the
       "projects/$GITLAB_PROJECT/merge_requests/$ARGUMENTS" \
       | jq '{has_conflicts, detailed_merge_status, target_branch, source_branch}'
 
-## Check out the source branch, then merge the target in
+## Start from the MR's source branch, then merge the target in
 
-    eval "$(~/.claude/scripts/gitlab-remote.sh)" && git checkout <source_branch> \
-      && git fetch "$GITLAB_REMOTE" <target_branch> \
+    eval "$(~/.claude/scripts/gitlab-remote.sh)" \
+      && git fetch "$GITLAB_REMOTE" <source_branch> <target_branch> \
+      && git switch --detach "$GITLAB_REMOTE/<source_branch>" \
       && git merge "$GITLAB_REMOTE/<target_branch>"
 
 ## Push to the GitLab remote
 
-    eval "$(~/.claude/scripts/gitlab-remote.sh)" && git push "$GITLAB_REMOTE" HEAD
+    eval "$(~/.claude/scripts/gitlab-remote.sh)" && git push "$GITLAB_REMOTE" HEAD:<source_branch>
 
 `git push` with no argument follows the branch's configured upstream, which in
 some repos may well be GitHub. Push the merge there and the MR stays

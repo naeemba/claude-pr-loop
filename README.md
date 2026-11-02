@@ -39,7 +39,7 @@ opinion of its own work.
 | File | Role |
 |---|---|
 | `review/standard.md` | **The review standard.** What to look for, how to verify it, how to grade it. All four review commands read this one file. |
-| `commands/pr-review.md` | Initial review. Shards the diff, runs every angle over every shard in parallel, verifies each candidate, posts inline comments. |
+| `commands/pr-review.md` | Initial review. Shards the diff, runs up to four grouped finders and one verifier per shard (one agent working through it all inside `/pr-loop`), posts inline comments. |
 | `commands/pr-address.md` | Fixes valid comments, rejects invalid ones with a reason. Replies with the commit SHA. Never resolves threads. |
 | `commands/pr-rereview.md` | Verifies each fix against the code at that SHA, resolves what's genuinely fixed, reviews what the fixes broke. |
 | `commands/pr-conflicts.md` | Merges the base branch into a conflicting PR and resolves by hand. Never rebases. The loop runs it before round 1. |
@@ -109,8 +109,8 @@ Everything is optional. Environment variables go in the `env` block of
 | Role | Runs | Model and effort |
 |---|---|---|
 | Review, re-review rounds | `/pr-review`, `/pr-rereview` | `opus`, high — pinned, so a cheaper session can't downgrade the rounds that decide what's wrong. `reviewModel` overrides. |
-| Fix rounds | `/pr-address` | The session's own model and effort. `fixModel` overrides. |
-| Conflict step | `/pr-conflicts` | The session's own. `conflictsModel` overrides. |
+| Fix rounds | `/pr-address` | The session's own model and effort. `fixModel` overrides; a pinned model runs at low effort. |
+| Conflict step | `/pr-conflicts` | The session's own. `conflictsModel` overrides; a pinned model runs at low effort. |
 | Standalone `/pr-review`, `/pr-rereview` | frontmatter | `opus`, high. |
 | Standalone `/pr-address`, `/pr-conflicts` | frontmatter | `sonnet`, low. |
 | Finders inside a standalone review | `review/standard.md` | Correctness and security/performance on `opus`; patterns, structure, names, reuse, layout and tests on `sonnet`. Verifiers on `opus`. |
@@ -275,7 +275,7 @@ but it's collected into one follow-up issue instead of being fixed here. "The
 rest of the repo doesn't follow the new convention yet" is always out-of-scope;
 introducing a convention doesn't oblige a change to sweep the codebase.
 
-Out-of-scope findings then leave twice: one issue holding all of them as the
+Out-of-scope findings then leave the review: one issue holding all of them as the
 digest, and — when `PR_LOOP_CARD_SCRIPT` is set — one board card each as the
 work queue. The fix rounds never touch them.
 
@@ -304,8 +304,9 @@ instead. Useful for a dry run on someone else's change.
 
 ## Cost
 
-The loop is not cheap. One round is a review fan-out (angles × shards, plus a
-verifier per candidate) followed by a fix agent. A large change over several
+The loop is not cheap. Standalone, a review is up to four finders plus one verifier
+per shard. Inside `/pr-loop` each round is one review agent followed by one fix
+agent. A large change over several
 rounds is a lot of tokens. Run `/pr-review` on its own first to see what you're
 in for before reaching for `/pr-loop`.
 

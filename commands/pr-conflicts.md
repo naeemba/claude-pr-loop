@@ -34,10 +34,17 @@ False is a positive claim that the branch merges cleanly, and nobody checked.
 ## Merge the base in. Never rebase
 
 Use the branch names you already have from step 1 — do not ask the forge twice.
-Check out `<headRefName>` first if it is not already what you are on:
+Start from the PR's head as the forge has it, not from whatever the local
+branch holds:
 
-    git checkout <headRefName> \
-      && git fetch origin <baseRefName> && git merge origin/<baseRefName>
+    git fetch origin <headRefName> <baseRefName> \
+      && git switch --detach origin/<headRefName> \
+      && git merge origin/<baseRefName>
+
+A local `<headRefName>` can be behind the PR (the push is then rejected) or ahead
+of it with unpushed commits (they would go out with the merge), and in a
+worktree it is often checked out elsewhere, so `git checkout` fails. A detached
+head at `origin/<headRefName>` sidesteps all three.
 
 Rebasing force-pushes over a branch reviewers have commented on, and GitHub
 drops every inline thread attached to the old commits. A run of `/pr-loop` can
@@ -68,4 +75,4 @@ Type-check, lint, tests — whatever the repo has. Two changes that each pass on
 their own can fail together, and that is exactly what a conflict is. Do not push
 a branch you know is red.
 
-    git push origin HEAD
+    git push origin HEAD:<headRefName>
