@@ -49,7 +49,7 @@ opinion of its own work.
 | `scripts/pr-unresolved-threads.sh` | Prints a PR's unresolved review threads as JSON. |
 | `scripts/mr-unresolved-threads.sh` | The same for a GitLab MR. |
 | `scripts/gitlab-remote.sh` | Works out which remote is the GitLab one, for repos that keep GitHub on `origin` and GitLab on a second remote. |
-| `install.sh` | Links all of the above into `~/.claude`, one file at a time. |
+| `install.sh` | Links all of the above into `~/.claude`, one file at a time, and copies the workflow. |
 | `tests/`, `install.test.sh` | Self-checks for the workflow, the GitLab thread lister and the install script. |
 
 The review, re-review, address and conflicts commands work standalone. You don't need the loop to use them.
@@ -65,12 +65,22 @@ cd claude-pr-loop
 ./install.sh
 ```
 
-`install.sh` symlinks each command into `~/.claude/commands/`, the workflow into
-`~/.claude/workflows/`, the standard into `~/.claude/review/` and the helper
-scripts into `~/.claude/scripts/`. Links point back at the checkout, so `git
-pull` is the update. Anything of yours already in those folders stays; a real
-file where one of these goes is moved aside as `<name>.backup-<timestamp>`.
-Re-running it also removes links to files this checkout no longer has.
+`install.sh` symlinks each command into `~/.claude/commands/`, the standard into
+`~/.claude/review/` and the helper scripts into `~/.claude/scripts/`. Links
+point back at the checkout, so `git pull` updates them. Anything of yours
+already in those folders stays; a real file where one of these goes is moved
+aside as `<name>.backup-<timestamp>`. Re-running it also removes links to files
+this checkout no longer has.
+
+The workflow is **copied** into `~/.claude/workflows/`, not linked. The Workflow
+tool follows a link to its target and refuses one outside what the session can
+read, so a linked `pr-loop.js` fails in every project other than this checkout.
+A copy does not follow `git pull`: **re-run `./install.sh` after pulling.**
+`/pr-loop` and `/mr-loop` refuse to start while the copy differs from the
+checkout. Each run replaces the installed copy; one you edited is moved aside as
+`<name>.backup-<timestamp>` first. A copy is not a link, so the cleanup above
+does not cover it: if the checkout renames or drops a workflow, delete the old
+copy from `~/.claude/workflows/` by hand.
 
 The paths matter: the commands read `~/.claude/review/standard.md` by name, and
 the workflow reads the command files out of `~/.claude/commands`.

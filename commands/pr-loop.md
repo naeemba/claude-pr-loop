@@ -5,6 +5,14 @@ argument-hint: <pr-number>
 
 Run the PR review/fix/re-review loop for PR #$ARGUMENTS.
 
+Before anything else, check the installed workflow copy is current. It is a
+copy, not a link, so a `git pull` in the checkout leaves it running old code
+next to new command files:
+
+    checkout=$(dirname "$(dirname "$(readlink ~/.claude/commands/pr-loop.md)")") && cmp -s "$checkout/workflows/pr-loop.js" ~/.claude/workflows/pr-loop.js
+
+If it fails, stop and tell the user to re-run `./install.sh` in the checkout.
+
 Call the `Workflow` tool with:
 - `scriptPath`: the ABSOLUTE path to `pr-loop.js` — your home directory followed
   by `/.claude/workflows/pr-loop.js`. The Workflow tool does not expand `~`.
