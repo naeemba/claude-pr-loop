@@ -38,5 +38,13 @@ echo stale > "$work/.claude/workflows/pr-loop.js"
 install
 workflow_copied "after a re-run over a stale copy"
 compgen -G "$work/.claude/workflows/pr-loop.js.backup-*" >/dev/null || fail "edited workflow copy not backed up"
+# An untouched copy of an older release is replaced without a backup.
+if [ -d .git ]; then
+  rm -f "$work/.claude/workflows/pr-loop.js".backup-*
+  git show "$(git log --format=%H -- workflows/pr-loop.js | tail -1):workflows/pr-loop.js" > "$work/.claude/workflows/pr-loop.js"
+  install
+  workflow_copied "after a re-run over an older release"
+  ! compgen -G "$work/.claude/workflows/pr-loop.js.backup-*" >/dev/null || fail "unedited older workflow copy backed up"
+fi
 [[ $(readlink "$work/.claude/commands/pr-loop.md") == "$checkout/commands/pr-loop.md" ]] || fail "second run broke a link"
 echo ok

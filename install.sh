@@ -26,10 +26,22 @@ for file in commands/*.md review/*.md scripts/*.sh; do
   link_into_place "$checkout/$file" "$target/$file"
 done
 mkdir -p "$target/workflows"
+# True when the installed copy is a version this checkout once shipped, so an
+# untouched copy of an older release is not mistaken for an edit. Without git
+# history, only a copy identical to the current file counts.
+shipped_here() {
+  if [ -d .git ]; then
+    # Match the blob in the raw diff text rather than piping into `grep -q`,
+    # whose early exit would fail the pipeline under pipefail.
+    [[ $(git log --all --format= --raw --no-abbrev -- "$1") == *" $(git hash-object "$2") "* ]]
+  else
+    cmp -s "$1" "$2"
+  fi
+}
 for file in workflows/*.js; do
   # Keep an edited copy aside, as link_into_place does; rm the rest so a link
   # left by an older install is replaced, not written through.
-  if [ -f "$target/$file" ] && [ ! -L "$target/$file" ] && ! cmp -s "$file" "$target/$file"; then
+  if [ -f "$target/$file" ] && [ ! -L "$target/$file" ] && ! cmp -s "$file" "$target/$file" && ! shipped_here "$file" "$target/$file"; then
     mv "$target/$file" "$target/$file.backup-$(date +%Y%m%d%H%M%S)"
   fi
   rm -f "$target/$file"
