@@ -45,7 +45,7 @@ Then, wherever those two files reach for GitHub, use the right column.
 | `mcp__github_inline_comment__create_inline_comment` | not available on GitLab — use the row below |
 | `gh api repos/{owner}/{repo}/pulls/N/comments` | `eval "$(~/.claude/scripts/gitlab-remote.sh)" && glab mr note create $ARGUMENTS --file <path> --line <line> -m "<body>"` |
 | a file-level comment (`subject_type: file`) | the same command with `--file <path>` and no `--line` |
-| `"$PR_LOOP_CARD_SCRIPT" …` | `eval "$(~/.claude/scripts/gitlab-remote.sh)" && "$PR_LOOP_CARD_SCRIPT" --remote "$GITLAB_REMOTE" …` |
+| `"${PR_LOOP_CARD_SCRIPT/#\~/$HOME}" …` | `eval "$(~/.claude/scripts/gitlab-remote.sh)" && "${PR_LOOP_CARD_SCRIPT/#\~/$HOME}" --remote "$GITLAB_REMOTE" …` |
 
 That `--remote` matters: without it a card script that pushes to a remote picks
 `origin`, which here is the GitHub mirror, and the follow-up work lands on a

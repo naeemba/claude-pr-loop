@@ -19,20 +19,16 @@ link_into_place() {
   ln -sfn "$1" "$2"
 }
 
-for directory in commands workflows scripts review; do
-  mkdir -p "$target/$directory"
-  # A link left by an older checkout whose file is gone would still show up
-  # as a command that fails on its first read.
-  for link in "$target/$directory"/*; do
-    if [ -L "$link" ] && [ ! -e "$link" ] && [[ $(readlink "$link") == "$checkout/"* ]]; then
-      rm "$link"
-    fi
-  done
-done
-
 for file in commands/*.md workflows/*.js review/*.md scripts/*.sh; do
-  case $file in *.test.sh) continue ;; esac
+  mkdir -p "$target/$(dirname "$file")"
   link_into_place "$checkout/$file" "$target/$file"
+done
+# A link left for a file this checkout no longer has would still show up as a
+# command that fails on its first read. (Not `find -xtype`: macOS lacks it.)
+for link in "$target"/{commands,workflows,review,scripts}/*; do
+  if [ -L "$link" ] && [ ! -e "$link" ] && [[ $(readlink "$link") == "$checkout/"* ]]; then
+    rm "$link"
+  fi
 done
 
 echo "Linked into $target. A new session picks up /pr-loop and the other commands."

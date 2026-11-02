@@ -44,7 +44,7 @@ Then, wherever those two files reach for GitHub, use the right column.
 | `gh api repos/{owner}/{repo}/pulls/N/comments` | `eval "$(~/.claude/scripts/gitlab-remote.sh)" && glab mr note create $ARGUMENTS --file <path> --line <line> -m "<body>"` |
 | reply on an existing thread | `eval "$(~/.claude/scripts/gitlab-remote.sh)" && glab mr note create $ARGUMENTS --reply <discussion-id> -m "<body>"` |
 | `resolveReviewThread` with the thread id | `eval "$(~/.claude/scripts/gitlab-remote.sh)" && glab mr note resolve $ARGUMENTS <discussion-id>` |
-| `"$PR_LOOP_CARD_SCRIPT" …` | `eval "$(~/.claude/scripts/gitlab-remote.sh)" && "$PR_LOOP_CARD_SCRIPT" --remote "$GITLAB_REMOTE" …` |
+| `"${PR_LOOP_CARD_SCRIPT/#\~/$HOME}" …` | `eval "$(~/.claude/scripts/gitlab-remote.sh)" && "${PR_LOOP_CARD_SCRIPT/#\~/$HOME}" --remote "$GITLAB_REMOTE" …` |
 
 That `--remote` matters: without it a card script that pushes to a remote picks
 `origin`, which here is the GitHub mirror, and the follow-up work lands on a

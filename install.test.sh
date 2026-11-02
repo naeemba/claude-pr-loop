@@ -21,12 +21,11 @@ install
 for file in commands/pr-loop.md commands/mr-loop.md workflows/pr-loop.js review/standard.md scripts/pr-unresolved-threads.sh; do
   [[ $(readlink "$work/.claude/$file") == "$checkout/$file" ]] || fail "$file not linked"
 done
-[[ ! -e $work/.claude/scripts/mr-unresolved-threads.test.sh ]] || fail "test script was installed"
 [[ $(cat "$work/.claude/commands/other.md") == mine ]] || fail "the user's own command was touched"
 [[ ! -L $work/.claude/commands/gone.md ]] || fail "stale link kept"
 compgen -G "$work/.claude/commands/pr-loop.md.backup-*" >/dev/null || fail "real file not backed up"
 
-# A second run changes nothing and nests nothing.
+# A second run leaves the same links.
 install
-[[ ! -e $checkout/commands/commands ]] || fail "second run nested a link"
+[[ $(readlink "$work/.claude/commands/pr-loop.md") == "$checkout/commands/pr-loop.md" ]] || fail "second run broke a link"
 echo ok

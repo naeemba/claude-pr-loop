@@ -50,7 +50,7 @@ opinion of its own work.
 | `scripts/mr-unresolved-threads.sh` | The same for a GitLab MR. |
 | `scripts/gitlab-remote.sh` | Works out which remote is the GitLab one, for repos that keep GitHub on `origin` and GitLab on a second remote. |
 | `install.sh` | Links all of the above into `~/.claude`, one file at a time. |
-| `tests/`, `*.test.sh` | Self-checks for the workflow, the install script and the GitLab thread lister. |
+| `tests/`, `install.test.sh` | Self-checks for the workflow, the GitLab thread lister and the install script. |
 
 The review, re-review, address and conflicts commands work standalone. You don't need the loop to use them.
 
@@ -100,7 +100,7 @@ Everything is optional. Environment variables go in the `env` block of
 
 | Setting | Default | What it does |
 |---|---|---|
-| `PR_LOOP_CARD_SCRIPT` | unset | Path to an executable that files one card on your project board. When set, each out-of-scope finding also becomes a card. It is called as `"$PR_LOOP_CARD_SCRIPT" --title <t> --notes <n> --priority <urgent\|high\|medium\|low>`, plus `--remote <name>` on GitLab. Unset, the review files the follow-up issue only and says so. |
+| `PR_LOOP_CARD_SCRIPT` | unset | Path to an executable that files one card on your project board; a leading `~/` is fine. When set, each out-of-scope finding also becomes a card — the flags it is called with are in the "Out-of-scope findings" section of `review/standard.md`. Unset, the review files the follow-up issue only and says so. |
 | `GITLAB_REMOTE` | found | The git remote that is the GitLab one. Normally worked out by `gitlab-remote.sh`. |
 | workflow options | see [Options](#options) | Per run: `/pr-loop {"pr": 512, "stopAt": "nit"}`. |
 
@@ -302,10 +302,6 @@ disappearing from the unresolved list looks identical to a verified one.
 they post nothing, open no issue, resolve nothing, and return the findings
 instead. Useful for a dry run on someone else's change.
 
-**Edit in the checkout, not in `~/.claude`.** The installed files are links, so
-an edit through either path changes the checkout — commit it there, or keep a
-fork.
-
 ## Cost
 
 The loop is not cheap. One round is a review fan-out (angles × shards, plus a
@@ -318,7 +314,7 @@ in for before reaching for `/pr-loop`.
 ```bash
 node --test tests/pr-loop.test.js
 ./install.test.sh
-./scripts/mr-unresolved-threads.test.sh
+tests/mr-unresolved-threads.test.sh
 ```
 
 None of them need a network, `gh` or `glab`.

@@ -2,10 +2,10 @@
 # Self-check for mr-unresolved-threads.sh. Stubs `glab` with a fixed discussions
 # payload and a throwaway repo, so it runs with no network, no glab and no
 # GitLab. Run it after touching the sed or jq in that script.
-#   ./mr-unresolved-threads.test.sh
+#   tests/mr-unresolved-threads.test.sh
 set -euo pipefail
 cd "$(dirname "$0")"
-script=$PWD/mr-unresolved-threads.sh
+script=$PWD/../scripts/mr-unresolved-threads.sh
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 

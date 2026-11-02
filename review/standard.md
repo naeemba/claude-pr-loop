@@ -281,10 +281,11 @@ summary.
 **2. One board card per finding — only when a card script is configured.**
 Check `printenv PR_LOOP_CARD_SCRIPT`. Empty means no board: skip this step,
 create no cards, and say "no card script configured" in the summary. Otherwise
-it names an executable that files one card on the project's board. For each
-out-of-scope finding, run it from inside the repo:
+it names an executable that files one card on the project's board; a leading
+`~/` in it means the home directory, which the quoted form below expands. For
+each out-of-scope finding, run it from inside the repo:
 
-    "$PR_LOOP_CARD_SCRIPT" \
+    "${PR_LOOP_CARD_SCRIPT/#\~/$HOME}" \
       --title "<the finding's one-line summary>" \
       --notes "<the comment body, the concrete cost, then the issue and review links>" \
       --priority <from the table>
