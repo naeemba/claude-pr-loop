@@ -63,14 +63,14 @@ worth asking again. A merge commit is uglier and costs nothing.
   hand-merged lockfile installs a dependency tree nobody has ever tested.
 - **Stop rather than guess.** If two people changed the same logic in
   incompatible ways and the code does not tell you which one wins, run
-  `git merge --abort && git switch -` (`-` is whatever was checked out before
-  the detach), so the user is back where the run started and not on a detached
-  head where a commit lands on no branch. Report the conflict unresolved,
-  naming the file and what the two sides disagree about, and say in the summary
-  which branch the checkout is on. Say who to ask if the blame makes that
-  obvious. A wrong resolution is worse
-  than an open conflict: an open conflict blocks the merge button, and a wrong
-  one lands looking deliberate.
+  `git merge --abort && git checkout -` (`-` is whatever was checked out
+  before the detach, a branch or a detached commit; `git switch -` fails on the
+  latter), so the user is back where the run started. Report the conflict
+  unresolved, naming the file and what the two sides disagree about, and say in
+  the summary which branch the checkout is on, or that it is detached. Say who
+  to ask if the blame makes that obvious. A wrong resolution is worse than an
+  open conflict: an open conflict blocks the merge button, and a wrong one lands
+  looking deliberate.
 
 ## Run the repo's checks before pushing
 
