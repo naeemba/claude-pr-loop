@@ -13,6 +13,38 @@ next to new command files:
 
 If it fails, stop and tell the user to re-run `./install.sh` in the checkout.
 
+## Mark the PR while the loop runs
+
+The PR says on its own page whether a loop is running, and CI waits for the
+loop instead of running on every fix push. Comments only inform; no workflow
+listens to them. The gate is the draft flag the CI workflows already skip on.
+
+Before calling the Workflow tool:
+
+1. Read `gh pr view $ARGUMENTS --json isDraft,headRefName`. Remember whether it
+   was a draft.
+2. If it was not a draft: `gh pr ready $ARGUMENTS --undo`. Do not cancel runs
+   already going: one in progress finishes on a stale head, which does no harm.
+3. Post `gh pr comment $ARGUMENTS --body "Review loop started. Fix commits
+   land here while it runs; CI waits until it finishes."`
+
+After the workflow returns, whatever its status:
+
+4. Post a comment headed `Review loop finished: <status>`, with the rounds run,
+   findings addressed and rejected, the commits from `commitShas`, and any
+   `floorThreads` or `blockedOnHuman` left open.
+5. If step 1 found it ready, `gh pr ready $ARGUMENTS`. That fires
+   `ready_for_review`, and CI runs once on the final commit. If it was a draft
+   before the loop, leave it a draft.
+
+If the session dies mid-loop, the PR is left a draft with a "started" comment
+and no "finished" one. That pair is the signal: finish or re-run the loop, then
+mark it ready by hand.
+
+To wait for CI, run `gh pr checks $ARGUMENTS --watch` as a background Bash call
+(`run_in_background`) and carry on until it reports back. Never a foreground
+`sleep`, and never repeated hand polls.
+
 Call the `Workflow` tool with:
 - `scriptPath`: the ABSOLUTE path to `pr-loop.js` — your home directory followed
   by `/.claude/workflows/pr-loop.js`. The Workflow tool does not expand `~`.
