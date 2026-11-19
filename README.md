@@ -192,14 +192,18 @@ how many comments it posted, how many threads the script printed. Whether that
 means "clean" is computed by the workflow. A reviewer that could declare its own
 work finished would.
 
-**The last commits of a run have no review behind them.** On `floor-addressed`
-the final fix agent is told it's last, and told to reject anything it can't fix
-safely in a small diff — but if a `low` fix breaks a test, no round after it will
-catch that. Read the final diff.
+**The last commits of a run get a check, not a review.** When the run ends on a
+fix round that pushed something (the floor pass, or the last round before
+`maxRounds`), one fresh agent checks only those commits against the threads they
+answer, and never fixes. If it rejects one — it broke something, changed
+behaviour beyond the finding, or didn't fix it — the loop `git revert`s it
+(never a force-push), reopens its threads and lists them in `blockedOnHuman`
+for a person. It can't start another fix round, so there's nothing after it to
+check in turn. A last round that pushed nothing skips it.
 
 Because the floor makes severity load-bearing, a mislabelled finding has a real
 cost: tag something `low` that's really `medium` and it gets fixed in that last
-unverified round. That's a deliberate trade — it buys you roughly a round per
+round, with only the check-only pass behind it. That's a deliberate trade — it buys you roughly a round per
 run. Raising `stopAt` raises what lands there, which is why the default is `low`.
 
 ### Options

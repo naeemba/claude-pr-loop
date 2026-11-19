@@ -31,8 +31,9 @@ Before calling the Workflow tool:
 After the workflow returns, whatever its status:
 
 4. Post a comment headed `Review loop finished: <status>`, with the rounds run,
-   findings addressed and rejected, the commits from `commitShas`, and any
-   `floorThreads` or `blockedOnHuman` left open.
+   findings addressed and rejected, the commits from `commitShas`, the final
+   check's outcome (see Final check below), and any `floorThreads` or
+   `blockedOnHuman` left open.
 5. If step 1 found it ready, `gh pr ready $ARGUMENTS`. That fires
    `ready_for_review`, and CI runs once on the final commit. If it was a draft
    before the loop, leave it a draft.
@@ -101,15 +102,14 @@ Three things are specific to the loop:
   pass `stopAt: 'nit'` to only stop on a fully clean PR. A `blocker` still never
   stops the loop early — the floor is a bottom, not a priority order.
 
-  Raising `stopAt` above `low` raises what that last unverified round handles.
+  Raising `stopAt` above `low` raises what that last round handles, with only the check-only pass behind it.
   `stopAt: 'medium'` means a `medium` finding — a route that checks a session
   exists but never checks it owns the row — gets fixed in a small diff with no
   re-review behind it. The default is `low` for that reason.
 
-  The trade: the last commits of a run are pushed without a review round behind
-  them. The final fix agent is told it is last and told to reject anything it
-  cannot fix safely in a small diff, but if a `low` fix breaks a test, no round
-  after it will catch that. Read the final diff.
+  The trade: the last commits of a run get no re-review round behind them,
+  only the check-only pass below. The final fix agent is told it is last and
+  told to reject anything it cannot fix safely in a small diff.
 - **An untagged thread always counts as above the floor.** A human reviewer's
   plain comment carries no tag, and it must never be the thing that ends the loop.
   Every round classifies ALL unresolved threads, not just the ones it posted.
@@ -122,8 +122,27 @@ Three things are specific to the loop:
 
 Because the floor makes severity load-bearing, a mislabelled finding now has a
 cost: tag `low` something that is really `medium` and the loop fixes it in the
-final round, in a small diff with nothing after it to check. That is the trade
+final round, in a small diff with only the check-only pass behind it. That is the trade
 being made deliberately — it buys a round per run.
+
+## Final check
+
+When the run ends on a fix round that pushed commits — the floor pass, or the
+last round before `maxRounds` — one fresh agent checks only those commits,
+against the threads that round says they fixed. It runs tests and checks, and
+it never fixes, replies or pushes. A last round that pushed nothing skips it.
+
+- **Accepted:** the run ends as it would have.
+- **Rejected** — it broke something, changed behaviour beyond the finding, or
+  did not fix it: a second agent reverts the commit with `git revert` (never a
+  reset or force-push), replies on its threads, and reopens any that are
+  resolved. Those threads join `blockedOnHuman`, marked reverted or, if the
+  revert conflicted, still on the branch.
+
+The check cannot start another fix round, so nothing after it needs checking
+in turn. The result carries `finalCheck`: `null` when skipped, `verdicts: null`
+when the check agent failed (the commits stay unverified — say so), otherwise
+`rejected` and, when any were, `revert`.
 
 ## Conflicts
 
@@ -164,8 +183,9 @@ every thread in `floorThreads` — path, line, tag, what it asks for — and mar
 the ones named in the last `history` entry's `rejectedThreads` as rejected,
 with the reason given there. Those are still open. Give that entry's
 `addressed`/`rejected` too: if both are zero, the final round did nothing and
-every thread on the list is untouched — say that outright. Say plainly that
-nothing verified those last commits, and that the diff is worth a glance.
+every thread on the list is untouched — say that outright. Then give the
+final check's verdict on those commits from `finalCheck`, naming any it
+reverted.
 
 `stopped-at-floor` now means only the narrow case: nothing above the floor and
 nothing a fix round could touch either — every remaining thread is waiting on a

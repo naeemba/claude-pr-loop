@@ -40,6 +40,8 @@ const cleanReview = {
   blockedOnHuman: [],
 }
 
+const floorReview = { ...cleanReview, unresolvedCommentsRemaining: 1, remainingAtOrBelowFloor: ['a.ts:1 — [low] — rename'] }
+
 test('an unresolved conflict stops the run before any review', async () => {
   const conflicts = {
     summary: 'both sides rewrote the same function',
@@ -83,18 +85,20 @@ test('the result keeps every commit but only a short line per agent', async () =
     rejected: 1,
     pushed: true,
     rejectedThreads: ['b.ts:2 — the typo is the upstream API spelling'],
+    addressedThreads: ['T1 — a.ts:1 — abc1234 — rename'],
   }
-  const { result } = await runWith('13', { conflicts: cleanMerge, 'review-r1': review, 'fix-r1': fix })
+  const check = { summary: longSummary, verdicts: [{ sha: 'abc1234', accepted: true, threads: [], reason: 'ok' }] }
+  const { result } = await runWith('13', { conflicts: cleanMerge, 'review-r1': review, 'fix-r1': fix, 'final-check': check })
   assert.equal(result.status, 'floor-addressed')
   assert.deepEqual(result.commitShas, ['abc1234', 'def5678'])
-  assert.deepEqual(result.history.map((entry) => entry.stage), ['review', 'fix'])
+  assert.deepEqual(result.history.map((entry) => entry.stage), ['review', 'fix', 'final-check'])
   assert.deepEqual(result.history[1].rejectedThreads, fix.rejectedThreads)
   assert.ok(JSON.stringify(result).length < 2048)
 })
 
 test('an agent error still reports the commits earlier rounds pushed', async () => {
   const review = { ...cleanReview, unresolvedCommentsRemaining: 1 }
-  const fix = { summary: 'fixed', commitShas: ['abc1234'], addressed: 1, rejected: 0, pushed: true, rejectedThreads: [] }
+  const fix = { summary: 'fixed', commitShas: ['abc1234'], addressed: 1, rejected: 0, pushed: true, rejectedThreads: [], addressedThreads: [] }
   const { result } = await runWith('13', {
     conflicts: cleanMerge,
     'review-r1': review,
@@ -108,9 +112,8 @@ test('an agent error still reports the commits earlier rounds pushed', async () 
 })
 
 test('review rounds pin opus at high effort, fix and conflicts stay on the session', async () => {
-  const review = { ...cleanReview, unresolvedCommentsRemaining: 1, remainingAtOrBelowFloor: ['a.ts:1 — [low] — rename'] }
-  const fix = { summary: 'fixed', commitShas: [], addressed: 1, rejected: 0, pushed: true, rejectedThreads: [] }
-  const { calls } = await runWith('13', { conflicts: cleanMerge, 'review-r1': review, 'fix-r1': fix })
+  const fix = { summary: 'fixed', commitShas: [], addressed: 1, rejected: 0, pushed: true, rejectedThreads: [], addressedThreads: [] }
+  const { calls } = await runWith('13', { conflicts: cleanMerge, 'review-r1': floorReview, 'fix-r1': fix })
   const byLabel = Object.fromEntries(calls.map((call) => [call.label, call.options]))
   assert.equal(byLabel['review-r1'].model, 'opus')
   assert.equal(byLabel['review-r1'].effort, 'high')
@@ -121,11 +124,10 @@ test('review rounds pin opus at high effort, fix and conflicts stay on the sessi
 })
 
 test('a pinned fix model runs at low effort, a session review model drops both keys', async () => {
-  const review = { ...cleanReview, unresolvedCommentsRemaining: 1, remainingAtOrBelowFloor: ['a.ts:1 — [low] — rename'] }
-  const fix = { summary: 'fixed', commitShas: [], addressed: 1, rejected: 0, pushed: true, rejectedThreads: [] }
+  const fix = { summary: 'fixed', commitShas: [], addressed: 1, rejected: 0, pushed: true, rejectedThreads: [], addressedThreads: [] }
   const { calls } = await runWith(
     { pr: '13', fixModel: 'sonnet', reviewModel: null },
-    { conflicts: cleanMerge, 'review-r1': review, 'fix-r1': fix },
+    { conflicts: cleanMerge, 'review-r1': floorReview, 'fix-r1': fix },
   )
   const byLabel = Object.fromEntries(calls.map((call) => [call.label, call.options]))
   assert.equal(byLabel['fix-r1'].model, 'sonnet')
@@ -148,4 +150,79 @@ test('a conflict step that never answers still lets the rounds run', async () =>
   assert.equal(result.status, 'converged')
   assert.equal(result.conflicts, null)
   assert.ok(calls.some((call) => call.label === 'review-r1'))
+})
+
+const pushingFix = {
+  summary: 'fixed',
+  commitShas: ['abc1234'],
+  addressed: 1,
+  rejected: 0,
+  pushed: true,
+  rejectedThreads: [],
+  addressedThreads: ['T1 — a.ts:1 — abc1234 — rename'],
+}
+const verdict = (accepted) => ({
+  summary: 'checked',
+  verdicts: [{ sha: 'abc1234', accepted, threads: ['T1 — a.ts:1 — abc1234 — rename'], reason: accepted ? 'fine' : 'breaks the import' }],
+})
+const cleanRevert = { summary: 'reverted', revertShas: ['fff0000'], notReverted: [], pushed: true }
+
+test('a final check that accepts ends the run as before, with no revert', async () => {
+  const { result, calls } = await runWith('13', {
+    conflicts: cleanMerge, 'review-r1': floorReview, 'fix-r1': pushingFix, 'final-check': verdict(true),
+  })
+  assert.equal(result.status, 'floor-addressed')
+  assert.deepEqual(calls.map((call) => call.label), ['conflicts', 'review-r1', 'fix-r1', 'final-check'])
+  assert.match(calls[3].prompt, /abc1234/)
+  assert.match(calls[3].prompt, /T1 — a\.ts:1/)
+  assert.deepEqual(result.blockedOnHuman, [])
+})
+
+test('a rejected commit is reverted, handed to a person, and starts no new round', async () => {
+  const { result, calls } = await runWith('13', {
+    conflicts: cleanMerge, 'review-r1': floorReview, 'fix-r1': pushingFix, 'final-check': verdict(false), 'final-revert': cleanRevert,
+  })
+  assert.equal(result.status, 'floor-addressed')
+  assert.deepEqual(calls.map((call) => call.label), ['conflicts', 'review-r1', 'fix-r1', 'final-check', 'final-revert'])
+  assert.match(calls[4].prompt, /git revert --no-edit/)
+  assert.match(calls[4].prompt, /unresolveReviewThread/)
+  assert.deepEqual(result.commitShas, ['abc1234', 'fff0000'])
+  assert.equal(result.blockedOnHuman.length, 1)
+  assert.match(result.blockedOnHuman[0], /^T1 — a\.ts:1 .*rejected by the final check, reverted — breaks the import$/)
+})
+
+test('a revert that could not land says the commit is still on the branch', async () => {
+  const revert = { summary: 'conflict', revertShas: [], notReverted: [{ sha: 'abc1234', reason: 'later commit depends on it' }], pushed: false }
+  const { result } = await runWith('13', {
+    conflicts: cleanMerge, 'review-r1': floorReview, 'fix-r1': pushingFix, 'final-check': verdict(false), 'final-revert': revert,
+  })
+  assert.match(result.blockedOnHuman[0], /NOT reverted, still on the branch/)
+})
+
+test('a last round that pushed nothing skips the final check', async () => {
+  const { result, calls } = await runWith('13', {
+    conflicts: cleanMerge, 'review-r1': floorReview, 'fix-r1': { ...pushingFix, commitShas: [], pushed: false },
+  })
+  assert.equal(result.status, 'floor-addressed')
+  assert.equal(result.finalCheck, null)
+  assert.ok(!calls.some((call) => call.label === 'final-check'))
+})
+
+test('stopping at maxRounds after a pushing fix still runs the final check', async () => {
+  const review = { ...cleanReview, unresolvedCommentsRemaining: 1 }
+  const { result, calls } = await runWith({ pr: '13', maxRounds: 1 }, {
+    conflicts: cleanMerge, 'review-r1': review, 'fix-r1': pushingFix, 'final-check': verdict(true),
+  })
+  assert.equal(result.status, 'max-rounds-hit')
+  assert.equal(calls.at(-1).label, 'final-check')
+})
+
+test('on GitLab the revert reopens threads through the discussions API', async () => {
+  const { calls } = await runWith({ pr: '7', forge: 'gitlab' }, {
+    conflicts: cleanMerge, 'review-r1': floorReview, 'fix-r1': pushingFix, 'final-check': verdict(false), 'final-revert': cleanRevert,
+  })
+  const revertCall = calls.find((call) => call.label === 'final-revert')
+  assert.match(revertCall.prompt, /merge_requests\/7\/discussions\/<thread id>" -f resolved=false/)
+  assert.match(revertCall.prompt, /mr-address\.md/)
+  assert.match(calls.find((call) => call.label === 'final-check').prompt, /merge request !7/)
 })

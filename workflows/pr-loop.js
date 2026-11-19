@@ -22,6 +22,8 @@ export const meta = {
     { title: 'Round 5: Fix', detail: 'Runs /pr-address verbatim in a fresh session', model: 'inherit' },
     { title: 'Round 6: Re-review', detail: 'Runs /pr-rereview verbatim in a fresh session', model: 'opus' },
     { title: 'Round 6: Fix', detail: 'Runs /pr-address verbatim in a fresh session', model: 'inherit' },
+    { title: 'Final check', detail: 'Checks only the last fix round\'s commits; never fixes', model: 'opus' },
+    { title: 'Final check: Revert', detail: 'Only when the check rejects a commit — git revert, reopen its threads', model: 'inherit' },
   ],
 }
 
@@ -32,10 +34,10 @@ const workflowArguments = args && typeof args === 'object' ? args : {}
 
 const MAX_ROUNDS = workflowArguments.maxRounds || 6
 // The loop stops re-reviewing once nothing above this severity is left
-// unresolved — the remaining tail gets one final fix round with nothing after it
-// to check the work, rather than costing a re-review + fix agent pair per round.
+// unresolved — the remaining tail gets one final fix round and a check-only pass
+// over its commits, rather than costing a re-review + fix agent pair per round.
 // Set `stopAt: 'nit'` to only stop on a fully clean PR; a higher tag sends more,
-// and more serious, findings into that unverified final round.
+// and more serious, findings into that final round, which gets only a check-only pass.
 // Must match the scale defined in ~/.claude/review/standard.md, which is the
 // source of truth for it; this array is the only copy and must not drift.
 const SEVERITY_ORDER = ['nit', 'low', 'medium', 'high', 'blocker']
@@ -51,17 +53,37 @@ const START_AT_REREVIEW = workflowArguments.startAt === 'rereview'
 
 const COMMANDS_DIR = '~/.claude/commands'
 
+// A bare `/pr-loop 622` sometimes arrives as the number 622, not the string.
+const pr = typeof args === 'string' || typeof args === 'number'
+  ? String(args).trim()
+  : (workflowArguments.pr || workflowArguments.mr || workflowArguments.iid || workflowArguments.prNumber || workflowArguments.number)
+if (!pr) throw new Error('pr-loop: PR/MR number required as args (string or number) or args.pr')
+
 // Same loop, two forges. The rounds, the counts and the convergence rules are
-// identical -- only the command files each round executes and the script that
-// lists open threads differ, and those differ by one prefix: pr- on GitHub,
-// mr- on GitLab. `forge: 'gitlab'` is what /mr-loop passes.
-const FORGE_PREFIXES = { github: 'pr', gitlab: 'mr' }
-const forgeName = workflowArguments.forge || 'github'
-const prefix = FORGE_PREFIXES[forgeName]
-if (!prefix) {
-  throw new Error(`pr-loop: forge must be one of ${Object.keys(FORGE_PREFIXES).join(', ')}`)
+// identical -- only the command files each round executes, the script that
+// lists open threads, what the change is called and how the final check's
+// revert reopens a thread differ. The files differ by one prefix: pr- on
+// GitHub, mr- on GitLab. `forge: 'gitlab'` is what /mr-loop passes.
+const FORGES = {
+  github: {
+    prefix: 'pr',
+    noun: `PR #${pr}`,
+    reopenCommand: `gh api graphql -f query='mutation($id:ID!){unresolveReviewThread(input:{threadId:$id}){thread{isResolved}}}' -F id=<thread id>`,
+  },
+  gitlab: {
+    prefix: 'mr',
+    noun: `merge request !${pr}`,
+    reopenCommand: `eval "$(~/.claude/scripts/gitlab-remote.sh)" && glab api --method PUT "projects/$GITLAB_PROJECT/merge_requests/${pr}/discussions/<thread id>" -f resolved=false`,
+  },
 }
+const forgeName = workflowArguments.forge || 'github'
+if (!(forgeName in FORGES)) {
+  throw new Error(`pr-loop: forge must be one of ${Object.keys(FORGES).join(', ')}`)
+}
+const { prefix, noun, reopenCommand } = FORGES[forgeName]
 const FORGE = {
+  noun,
+  reopenCommand,
   review: `${prefix}-review.md`,
   rereview: `${prefix}-rereview.md`,
   address: `${prefix}-address.md`,
@@ -105,12 +127,6 @@ const CONFLICTS_MODEL = readModelArgument('conflictsModel', 'inherit')
 // passing `model: null` through to `agent()` while still pinning effort.
 const modelOptions = (model, { effort, ...rest }) =>
   SESSION_MODEL_VALUES.includes(model) ? rest : { ...rest, model, effort }
-
-// A bare `/pr-loop 622` sometimes arrives as the number 622, not the string.
-const pr = typeof args === 'string' || typeof args === 'number'
-  ? String(args).trim()
-  : (workflowArguments.pr || workflowArguments.mr || workflowArguments.iid || workflowArguments.prNumber || workflowArguments.number)
-if (!pr) throw new Error('pr-loop: PR/MR number required as args (string or number) or args.pr')
 
 const NO_ATTRIBUTION = `
 IMPORTANT: Never mention Claude, Anthropic, or any AI tooling in commits, comments,
@@ -184,7 +200,7 @@ const REVIEW_SCHEMA = {
 
 const FIX_SCHEMA = {
   type: 'object',
-  required: ['summary', 'commitShas', 'addressed', 'rejected', 'pushed', 'rejectedThreads'],
+  required: ['summary', 'commitShas', 'addressed', 'rejected', 'pushed', 'rejectedThreads', 'addressedThreads'],
   properties: {
     summary: { type: 'string', description: '1-3 sentence summary of fixes applied and pushed. Name any thread you rejected but left open because a different author raised it — those need a human answer.' },
     commitShas: { type: 'array', items: { type: 'string' }, description: 'Short SHAs of commits pushed this round.' },
@@ -195,6 +211,11 @@ const FIX_SCHEMA = {
       type: 'array',
       items: { type: 'string' },
       description: 'One line per thread you rejected THIS round: "path:line — why you did not fix it". Empty array if you rejected nothing.',
+    },
+    addressedThreads: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'One line per thread you fixed THIS round: "<thread id> — path:line — <commit sha> — what it asked for". The thread id is the one the unresolved-threads script prints. Empty array if you fixed nothing.',
     },
   },
 }
@@ -219,10 +240,11 @@ If the forge API is temporarily unavailable, retry with backoff before giving up
 const FINAL_FIX_NOTE = `
 This is the LAST round: apart from any thread already waiting on a person, only
 threads tagged \`${STOP_AT}\` or below are left, and no re-review follows this
-one. Leave the waiting threads alone. Nothing downstream will verify your work,
-so keep each fix small and self-evidently correct, and run whatever checks the
-repo has before pushing. If a fix would need real restructuring to do safely,
-reject it with an explanation instead of half-doing it.
+one. Leave the waiting threads alone. Only a check-only pass follows: it cannot
+fix anything, and any commit it rejects is reverted and handed to a person. So
+keep each fix small and self-evidently correct, one commit per thread, and run
+whatever checks the repo has before pushing. If a fix would need real
+restructuring to do safely, reject it with an explanation instead of half-doing it.
 `.trim()
 
 // Counts per agent, not the agent's whole report. The result arrives as a task
@@ -301,7 +323,152 @@ const resolveConflicts = async () => {
 // the branch and no word of them.
 const finish = (result) => ({ ...result, blockedOnHuman, commitShas, history })
 
+// The last fix round has no re-review behind it, whether the run stopped at the
+// floor or at maxRounds. One check-only agent reads just that round's commits.
+// It cannot fix, so it cannot start another round that would itself need
+// checking: a rejected commit is reverted, its threads reopened, and a person
+// takes it from there.
+
+const CHECK_SCHEMA = {
+  type: 'object',
+  required: ['summary', 'verdicts'],
+  properties: {
+    summary: { type: 'string', description: '1-3 sentence summary of the check.' },
+    verdicts: {
+      type: 'array',
+      description: 'Exactly one entry per commit you were given.',
+      items: {
+        type: 'object',
+        required: ['sha', 'accepted', 'threads', 'reason'],
+        properties: {
+          sha: { type: 'string' },
+          accepted: { type: 'boolean' },
+          threads: { type: 'array', items: { type: 'string' }, description: 'The given thread lines this commit answers, copied verbatim.' },
+          reason: { type: 'string', description: 'Why. On a rejection, the concrete failure: what breaks, what behaviour changed beyond the finding, or what is still unfixed.' },
+        },
+      },
+    },
+  },
+}
+
+const REVERT_SCHEMA = {
+  type: 'object',
+  required: ['summary', 'revertShas', 'notReverted', 'pushed'],
+  properties: {
+    summary: { type: 'string', description: '1-3 sentence summary.' },
+    revertShas: { type: 'array', items: { type: 'string' }, description: 'Short SHAs of the revert commits you pushed.' },
+    notReverted: {
+      type: 'array',
+      description: 'One entry per rejected commit you could NOT revert. Empty array if every revert landed.',
+      items: {
+        type: 'object',
+        required: ['sha', 'reason'],
+        properties: { sha: { type: 'string', description: 'The SHA exactly as you were given it.' }, reason: { type: 'string' } },
+      },
+    },
+    pushed: { type: 'boolean' },
+  },
+}
+
+const checkPrompt = (fix) => `
+You are a fresh session doing ONE check-only pass on ${FORGE.noun}, after the
+review loop's last fix round. No review round follows you, and you never fix:
+no edits, no commits, no pushes, no replies, no resolving or reopening threads.
+
+The last fix round pushed these commits:
+${fix.commitShas.map((sha) => `- ${sha}`).join('\n')}
+
+It reports fixing these threads ("<thread id> — path:line — sha — what it asked for"):
+${fix.addressedThreads.length ? fix.addressedThreads.map((line) => `- ${line}`).join('\n') : '- (none reported)'}
+
+For each commit: fetch it and read \`git show <sha>\`. Its thread line above is
+the finding; open the thread itself (\`${FORGE.threadsScript} ${pr}\`) only when
+the line is not enough to judge. Run whatever checks the repo has (tests,
+type-check, lint) on the head. Then judge it:
+- accept: it fixes what its thread asked, changes nothing beyond that, and
+  breaks nothing.
+- reject: it breaks something, changes behaviour beyond what the finding asked,
+  or does not fix the finding. A commit that answers no listed thread changes
+  behaviour beyond any finding.
+Reject only for a concrete failure you can name. A different way you would have
+written it is not one. Check only these commits; anything else on the branch is
+not yours to judge.
+
+${neverTheLoop('this check and nothing else')}
+
+${NO_ATTRIBUTION}
+
+Return the verdicts via the StructuredOutput tool.
+`.trim()
+
+const revertPrompt = (rejected) => `
+You are a fresh session. The review loop's final check on ${FORGE.noun} rejected
+these commits from its last fix round:
+${rejected.map((verdict) => `- ${verdict.sha} — ${verdict.reason}\n  threads: ${verdict.threads.join('; ') || '(none)'}`).join('\n')}
+
+Undo them, and fix nothing:
+1. Bring the checkout to the latest head of the branch — fetch it from the
+   remote the push section of ${COMMANDS_DIR}/${FORGE.address} pushes to (expand
+   the ~ first).
+2. Revert each commit, newest first, with \`git revert --no-edit <sha>\`. Never
+   reset, rebase, amend or force-push. If a revert conflicts, run
+   \`git revert --abort\`, leave that commit in place and list it in notReverted.
+3. Run whatever checks the repo has, then push exactly as that push section says.
+4. On each listed thread, reply saying the fix was rejected by the final check,
+   why, and which revert commit undid it (or that it could not be undone), and
+   that it needs a person. Reply the way ${FORGE.address} replies. If the thread
+   is resolved, reopen it:
+   \`${FORGE.reopenCommand}\`
+
+${neverTheLoop('this revert and nothing else')}
+
+${NO_ATTRIBUTION}
+
+Return the result via the StructuredOutput tool.
+`.trim()
+
+// Returns null when the last round pushed nothing, so there is nothing to check.
+const checkLastFix = async (fix) => {
+  if (!fix?.commitShas.length) return null
+  phase('Final check')
+  const check = await runAgentWithRetry(checkPrompt(fix), modelOptions(REVIEW_MODEL, {
+    label: 'final-check',
+    schema: CHECK_SCHEMA,
+    isolation: ISOLATION,
+    effort: 'high',
+  }))
+  if (!check) {
+    log('Final check failed; the last fix round\'s commits stay unverified.')
+    return { checked: fix.commitShas, verdicts: null }
+  }
+  const rejected = check.verdicts.filter((verdict) => !verdict.accepted)
+  const accepted = check.verdicts.length - rejected.length
+  history.push({ round: fix.round, stage: 'final-check', accepted, rejected: rejected.length })
+  log(`Final check: ${check.summary} | accepted=${accepted} rejected=${rejected.length}`)
+  if (!rejected.length) return { checked: fix.commitShas, rejected: [] }
+
+  phase('Final check: Revert')
+  const revert = await runAgentWithRetry(revertPrompt(rejected), modelOptions(FIX_MODEL, {
+    label: 'final-revert',
+    schema: REVERT_SCHEMA,
+    isolation: ISOLATION,
+    effort: 'low',
+  }))
+  if (revert) commitShas.push(...revert.revertShas)
+  const sameCommit = (one, other) => one.startsWith(other) || other.startsWith(one)
+  const undone = (sha) => revert && !revert.notReverted.some((entry) => sameCommit(entry.sha, sha))
+  blockedOnHuman = [
+    ...blockedOnHuman,
+    ...rejected.flatMap((verdict) => (verdict.threads.length ? verdict.threads : [`(no thread) — ${verdict.sha}`]).map(
+      (thread) => `${thread} — fix ${verdict.sha} rejected by the final check, ${undone(verdict.sha) ? 'reverted' : 'NOT reverted, still on the branch'} — ${verdict.reason}`,
+    )),
+  ]
+  return { checked: fix.commitShas, rejected, revert }
+}
+
+// The exits that end on a fix return it as `lastFix`, for the final check.
 const runLoop = async () => {
+  let lastFix = null
   for (let round = 1; round <= MAX_ROUNDS; round++) {
     const isFirstRound = round === 1 && !START_AT_REREVIEW
     phase(`Round ${round}: ${isFirstRound ? 'Review' : 'Re-review'}`)
@@ -315,7 +482,7 @@ const runLoop = async () => {
         effort: 'high',
       }),
     )
-    if (!review) return finish({ status: 'agent-error', stage: 'review', rounds: round })
+    if (!review) return { status: 'agent-error', stage: 'review', rounds: round }
 
     // Derived, not self-reported: every unresolved thread is either in the
     // at-or-below-floor list or above the floor (untagged threads never enter the
@@ -348,7 +515,7 @@ const runLoop = async () => {
     // gate this — confirmation replies on resolved threads count as posted.)
     if (review.unresolvedCommentsRemaining === 0) {
       log(`Converged after ${round} review round${round > 1 ? 's' : ''}.`)
-      return finish({ status: 'converged', rounds: round })
+      return { status: 'converged', rounds: round }
     }
 
     // Once only a stopAt-and-below tail is left, this round's fix agent is the
@@ -361,7 +528,7 @@ const runLoop = async () => {
       if (floorThreads.length === 0) {
         // Nothing a fix round could touch either -- every thread waits on a person.
         log(`Nothing to fix; ${blockedOnHuman.length} waiting on a person.`)
-        return finish({ status: 'stopped-at-floor', stopAt: STOP_AT, rounds: round })
+        return { status: 'stopped-at-floor', stopAt: STOP_AT, rounds: round }
       }
       log(`Final fix pass over ${floorThreads.length} thread${floorThreads.length === 1 ? '' : 's'}, then stopping without a re-review.`)
     }
@@ -371,9 +538,10 @@ const runLoop = async () => {
       `${runCommand(FORGE.address)}\n\n${fixSuffix}${isFinalFix ? `\n\n${FINAL_FIX_NOTE}` : ''}`,
       modelOptions(FIX_MODEL, { label: `fix-r${round}`, schema: FIX_SCHEMA, isolation: ISOLATION, effort: 'low' }),
     )
-    if (!fix) return finish({ status: 'agent-error', stage: 'fix', rounds: round })
+    if (!fix) return { status: 'agent-error', stage: 'fix', rounds: round }
 
     commitShas.push(...fix.commitShas)
+    lastFix = { round, ...fix }
     history.push({
       round,
       stage: 'fix',
@@ -390,17 +558,17 @@ const runLoop = async () => {
       // `floorThreads` is what the final round was ASKED to do. What it actually
       // did (addressed, rejected, rejectedThreads) is the last `history` entry,
       // kept in one place so the result does not carry the list twice.
-      return finish({ status: 'floor-addressed', stopAt: STOP_AT, rounds: round, floorThreads })
+      return { status: 'floor-addressed', stopAt: STOP_AT, rounds: round, floorThreads, lastFix }
     }
 
     if (fix.addressed === 0 && fix.rejected === 0) {
       log(`No progress in round ${round} fix. Exiting to avoid infinite loop.`)
-      return finish({ status: 'no-progress', rounds: round })
+      return { status: 'no-progress', rounds: round, lastFix }
     }
   }
 
   log(`Hit MAX_ROUNDS (${MAX_ROUNDS}). Stopping.`)
-  return finish({ status: 'max-rounds-hit', rounds: MAX_ROUNDS })
+  return { status: 'max-rounds-hit', rounds: MAX_ROUNDS, lastFix }
 }
 
 const conflicts = await resolveConflicts()
@@ -409,4 +577,6 @@ const conflicts = await resolveConflicts()
 if (conflicts?.hadConflicts && !conflicts.resolved) {
   return finish({ status: 'conflicts-unresolved', rounds: 0, conflicts })
 }
-return { ...(await runLoop()), conflicts }
+const { lastFix, ...outcome } = await runLoop()
+const finalCheck = await checkLastFix(lastFix)
+return finish({ ...outcome, finalCheck, conflicts })
