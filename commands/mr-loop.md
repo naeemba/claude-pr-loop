@@ -32,8 +32,10 @@ conflict step asks about conflicts (`has_conflicts` on the MR, not `gh pr view`)
 counts, the severity floor and every stopping rule are identical.
 
 Read `~/.claude/commands/pr-loop.md` for the rest: the review dimensions, the
-severity floor, the conflict step that runs before the loop, and what each final
-status means. All of it applies unchanged.
+severity floor, the conflict step that runs before the loop, the final check
+after the last fix round, and what each final status means. All of it applies
+unchanged. On GitLab the final check's revert pushes the way `/mr-address` does
+and reopens a thread with `PUT .../discussions/<id> resolved=false`.
 Two words differ — pull request is merge request, and the number is the MR's
 project-scoped **iid**, the `!123` a human sees.
 
