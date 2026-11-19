@@ -102,10 +102,11 @@ Three things are specific to the loop:
   pass `stopAt: 'nit'` to only stop on a fully clean PR. A `blocker` still never
   stops the loop early — the floor is a bottom, not a priority order.
 
-  Raising `stopAt` above `low` raises what that last round handles, with only the check-only pass behind it.
-  `stopAt: 'medium'` means a `medium` finding — a route that checks a session
-  exists but never checks it owns the row — gets fixed in a small diff with no
-  re-review behind it. The default is `low` for that reason.
+  Raising `stopAt` above `low` raises what that last round handles, with only
+  the check-only pass behind it. `stopAt: 'medium'` means a `medium` finding —
+  a route that checks a session exists but never checks it owns the row — gets
+  fixed in a small diff with no re-review behind it. The default is `low` for
+  that reason.
 
   The trade: the last commits of a run get no re-review round behind them,
   only the check-only pass below. The final fix agent is told it is last and
@@ -122,8 +123,8 @@ Three things are specific to the loop:
 
 Because the floor makes severity load-bearing, a mislabelled finding now has a
 cost: tag `low` something that is really `medium` and the loop fixes it in the
-final round, in a small diff with only the check-only pass behind it. That is the trade
-being made deliberately — it buys a round per run.
+final round, in a small diff with only the check-only pass behind it. That is
+the trade being made deliberately — it buys a round per run.
 
 ## Final check
 
@@ -139,10 +140,21 @@ it never fixes, replies or pushes. A last round that pushed nothing skips it.
   resolved. Those threads join `blockedOnHuman`, marked reverted or, if the
   revert conflicted, still on the branch.
 
+- **No verdict:** a commit the check returned no verdict for was never judged.
+  It stays on the branch, listed as unverified, not counted as accepted. A
+  verdict on a sha outside the round is dropped and never reverted.
+
+That last fix round is told it is last, at the floor and at `maxRounds` alike,
+and asked for one commit per thread, so a rejected commit is reverted without
+taking a sound fix down with it.
+
 The check cannot start another fix round, so nothing after it needs checking
 in turn. The result carries `finalCheck`: `null` when skipped, `verdicts: null`
 when the check agent failed (the commits stay unverified — say so), otherwise
-`rejected` and, when any were, `revert`.
+shas only: `checked` (every commit given), `rejected`, `unverified` (no verdict
+came back — say so) and, when any were rejected, `reverted` (revert commits
+that reached the branch) and `notReverted` (rejected commits still on it). The
+reasons are in `blockedOnHuman`.
 
 ## Conflicts
 
@@ -185,7 +197,7 @@ with the reason given there. Those are still open. Give that entry's
 `addressed`/`rejected` too: if both are zero, the final round did nothing and
 every thread on the list is untouched — say that outright. Then give the
 final check's verdict on those commits from `finalCheck`, naming any it
-reverted.
+reverted, any it rejected but could not revert, and any left unverified.
 
 `stopped-at-floor` now means only the narrow case: nothing above the floor and
 nothing a fix round could touch either — every remaining thread is waiting on a

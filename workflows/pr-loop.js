@@ -36,8 +36,9 @@ const MAX_ROUNDS = workflowArguments.maxRounds || 6
 // The loop stops re-reviewing once nothing above this severity is left
 // unresolved — the remaining tail gets one final fix round and a check-only pass
 // over its commits, rather than costing a re-review + fix agent pair per round.
-// Set `stopAt: 'nit'` to only stop on a fully clean PR; a higher tag sends more,
-// and more serious, findings into that final round, which gets only a check-only pass.
+// Set `stopAt: 'nit'` to only stop on a fully clean PR; a higher tag sends
+// more, and more serious, findings into that final round, which gets only a
+// check-only pass.
 // Must match the scale defined in ~/.claude/review/standard.md, which is the
 // source of truth for it; this array is the only copy and must not drift.
 const SEVERITY_ORDER = ['nit', 'low', 'medium', 'high', 'blocker']
@@ -234,17 +235,30 @@ branch, then return a structured result via the StructuredOutput tool.
 If the forge API is temporarily unavailable, retry with backoff before giving up.
 `.trim()
 
-// The last fix round is not followed by a re-review, so nothing downstream will
-// catch a fix that breaks something. Say so, rather than letting the agent
-// assume another round will.
+// The last fix round is not followed by a re-review, only by the check-only
+// pass below. Say so, so the agent keeps each fix small and in its own commit
+// for that pass to judge and, if need be, revert. A bundled commit would take
+// a sound fix down with a rejected one.
+const CHECK_ONLY_FOLLOWS = `
+Only a check-only pass follows: it cannot fix anything, and any commit it
+rejects is reverted whole and handed to a person. So keep each fix small and
+self-evidently correct, one commit per thread (this overrides any instruction to
+fix several occurrences in one commit), and run whatever checks the repo has
+before pushing. If a fix would need real restructuring to do safely, reject it
+with an explanation instead of half-doing it.
+`.trim()
+
+// The floor pass: only a tail at or below the floor is left.
 const FINAL_FIX_NOTE = `
 This is the LAST round: apart from any thread already waiting on a person, only
 threads tagged \`${STOP_AT}\` or below are left, and no re-review follows this
-one. Leave the waiting threads alone. Only a check-only pass follows: it cannot
-fix anything, and any commit it rejects is reverted and handed to a person. So
-keep each fix small and self-evidently correct, one commit per thread, and run
-whatever checks the repo has before pushing. If a fix would need real
-restructuring to do safely, reject it with an explanation instead of half-doing it.
+one. Leave the waiting threads alone. ${CHECK_ONLY_FOLLOWS}
+`.trim()
+
+// The round at maxRounds: anything may still be open, but nothing re-reviews it.
+const MAX_ROUNDS_NOTE = `
+This is the LAST round: the loop hits its round limit after it, and no
+re-review follows. ${CHECK_ONLY_FOLLOWS}
 `.trim()
 
 // Counts per agent, not the agent's whole report. The result arrives as a task
@@ -427,6 +441,9 @@ ${NO_ATTRIBUTION}
 Return the result via the StructuredOutput tool.
 `.trim()
 
+// Short and full SHAs of one commit name it equally.
+const sameCommit = (one, other) => one.startsWith(other) || other.startsWith(one)
+
 // Returns null when the last round pushed nothing, so there is nothing to check.
 const checkLastFix = async (fix) => {
   if (!fix?.commitShas.length) return null
@@ -441,11 +458,19 @@ const checkLastFix = async (fix) => {
     log('Final check failed; the last fix round\'s commits stay unverified.')
     return { checked: fix.commitShas, verdicts: null }
   }
-  const rejected = check.verdicts.filter((verdict) => !verdict.accepted)
-  const accepted = check.verdicts.length - rejected.length
-  history.push({ round: fix.round, stage: 'final-check', accepted, rejected: rejected.length })
-  log(`Final check: ${check.summary} | accepted=${accepted} rejected=${rejected.length}`)
-  if (!rejected.length) return { checked: fix.commitShas, rejected: [] }
+  // Match verdicts to the round's commits: a verdict on any other sha is
+  // dropped, never handed to the revert, and a commit with no verdict was never
+  // judged, so it is unverified, not accepted.
+  const inRound = (sha) => fix.commitShas.some((roundSha) => sameCommit(roundSha, sha))
+  const verdicts = check.verdicts.filter((verdict) => inRound(verdict.sha))
+  const unverified = fix.commitShas.filter((sha) => !verdicts.some((verdict) => sameCommit(verdict.sha, sha)))
+  const rejected = verdicts.filter((verdict) => !verdict.accepted)
+  const accepted = verdicts.length - rejected.length
+  history.push({ round: fix.round, stage: 'final-check', accepted, rejected: rejected.length, unverified: unverified.length })
+  log(`Final check: ${check.summary} | accepted=${accepted} rejected=${rejected.length} unverified=${unverified.length}`)
+  // Shas only: the reasons are in blockedOnHuman, one line per thread.
+  const outcome = { checked: fix.commitShas, rejected: rejected.map((verdict) => verdict.sha), unverified }
+  if (!rejected.length) return outcome
 
   phase('Final check: Revert')
   const revert = await runAgentWithRetry(revertPrompt(rejected), modelOptions(FIX_MODEL, {
@@ -454,16 +479,26 @@ const checkLastFix = async (fix) => {
     isolation: ISOLATION,
     effort: 'low',
   }))
-  if (revert) commitShas.push(...revert.revertShas)
-  const sameCommit = (one, other) => one.startsWith(other) || other.startsWith(one)
-  const undone = (sha) => revert && !revert.notReverted.some((entry) => sameCommit(entry.sha, sha))
+  // A revert that never reached the remote undid nothing.
+  const pushed = revert?.pushed === true
+  if (pushed) commitShas.push(...revert.revertShas)
+  const undone = (sha) => pushed && !revert.notReverted.some((entry) => sameCommit(entry.sha, sha))
   blockedOnHuman = [
     ...blockedOnHuman,
     ...rejected.flatMap((verdict) => (verdict.threads.length ? verdict.threads : [`(no thread) — ${verdict.sha}`]).map(
       (thread) => `${thread} — fix ${verdict.sha} rejected by the final check, ${undone(verdict.sha) ? 'reverted' : 'NOT reverted, still on the branch'} — ${verdict.reason}`,
     )),
   ]
-  return { checked: fix.commitShas, rejected, revert }
+  return {
+    ...outcome,
+    reverted: pushed ? revert.revertShas : [],
+    notReverted: outcome.rejected.filter((sha) => !undone(sha)),
+  }
+}
+
+const lastRoundNote = (isFinalFix, round) => {
+  if (isFinalFix) return `\n\n${FINAL_FIX_NOTE}`
+  return round === MAX_ROUNDS ? `\n\n${MAX_ROUNDS_NOTE}` : ''
 }
 
 // The exits that end on a fix return it as `lastFix`, for the final check.
@@ -535,7 +570,7 @@ const runLoop = async () => {
 
     phase(`Round ${round}: Fix`)
     const fix = await runAgentWithRetry(
-      `${runCommand(FORGE.address)}\n\n${fixSuffix}${isFinalFix ? `\n\n${FINAL_FIX_NOTE}` : ''}`,
+      `${runCommand(FORGE.address)}\n\n${fixSuffix}${lastRoundNote(isFinalFix, round)}`,
       modelOptions(FIX_MODEL, { label: `fix-r${round}`, schema: FIX_SCHEMA, isolation: ISOLATION, effort: 'low' }),
     )
     if (!fix) return { status: 'agent-error', stage: 'fix', rounds: round }

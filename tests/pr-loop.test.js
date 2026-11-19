@@ -96,6 +96,21 @@ test('the result keeps every commit but only a short line per agent', async () =
   assert.ok(JSON.stringify(result).length < 2048)
 })
 
+test('a commit the check returns no verdict for is unverified, not accepted', async () => {
+  const fix = { ...pushingFix, commitShas: ['abc1234', 'def5678'] }
+  const check = {
+    summary: 'checked',
+    verdicts: [
+      { sha: 'abc1234', accepted: true, threads: [], reason: 'ok' },
+      { sha: '9999999', accepted: false, threads: [], reason: 'not from this round' },
+    ],
+  }
+  const { result, calls } = await runWith('13', { conflicts: cleanMerge, 'review-r1': floorReview, 'fix-r1': fix, 'final-check': check })
+  assert.deepEqual(result.finalCheck, { checked: ['abc1234', 'def5678'], rejected: [], unverified: ['def5678'] })
+  assert.deepEqual(result.history.at(-1), { round: 1, stage: 'final-check', accepted: 1, rejected: 0, unverified: 1 })
+  assert.ok(!calls.some((call) => call.label === 'final-revert'))
+})
+
 test('an agent error still reports the commits earlier rounds pushed', async () => {
   const review = { ...cleanReview, unresolvedCommentsRemaining: 1 }
   const fix = { summary: 'fixed', commitShas: ['abc1234'], addressed: 1, rejected: 0, pushed: true, rejectedThreads: [], addressedThreads: [] }
@@ -189,6 +204,35 @@ test('a rejected commit is reverted, handed to a person, and starts no new round
   assert.deepEqual(result.commitShas, ['abc1234', 'fff0000'])
   assert.equal(result.blockedOnHuman.length, 1)
   assert.match(result.blockedOnHuman[0], /^T1 — a\.ts:1 .*rejected by the final check, reverted — breaks the import$/)
+  assert.deepEqual(result.finalCheck, { checked: ['abc1234'], rejected: ['abc1234'], unverified: [], reverted: ['fff0000'], notReverted: [] })
+  assert.ok(JSON.stringify(result).length < 2048)
+})
+
+test('a revert that was committed but never pushed counts as nothing reverted', async () => {
+  const revert = { ...cleanRevert, pushed: false }
+  const { result } = await runWith('13', {
+    conflicts: cleanMerge, 'review-r1': floorReview, 'fix-r1': pushingFix, 'final-check': verdict(false), 'final-revert': revert,
+  })
+  assert.deepEqual(result.commitShas, ['abc1234'])
+  assert.match(result.blockedOnHuman[0], /NOT reverted, still on the branch/)
+  assert.deepEqual(result.finalCheck.reverted, [])
+  assert.deepEqual(result.finalCheck.notReverted, ['abc1234'])
+})
+
+test('a final check agent that fails leaves the commits unverified and the run as it was', async () => {
+  const { result } = await runWith('13', { conflicts: cleanMerge, 'review-r1': floorReview, 'fix-r1': pushingFix })
+  assert.equal(result.status, 'floor-addressed')
+  assert.equal(result.finalCheck.verdicts, null)
+  assert.deepEqual(result.blockedOnHuman, [])
+  assert.ok(!result.history.some((entry) => entry.stage === 'final-check'))
+})
+
+test('a revert agent that fails reports the rejected commit as still on the branch', async () => {
+  const { result } = await runWith('13', {
+    conflicts: cleanMerge, 'review-r1': floorReview, 'fix-r1': pushingFix, 'final-check': verdict(false),
+  })
+  assert.match(result.blockedOnHuman[0], /NOT reverted, still on the branch/)
+  assert.deepEqual(result.commitShas, ['abc1234'])
 })
 
 test('a revert that could not land says the commit is still on the branch', async () => {
@@ -215,6 +259,15 @@ test('stopping at maxRounds after a pushing fix still runs the final check', asy
   })
   assert.equal(result.status, 'max-rounds-hit')
   assert.equal(calls.at(-1).label, 'final-check')
+  assert.match(calls.find((call) => call.label === 'fix-r1').prompt, /one commit per thread/)
+})
+
+test('a fix round before the last one is not told it is last', async () => {
+  const review = { ...cleanReview, unresolvedCommentsRemaining: 1 }
+  const { calls } = await runWith({ pr: '13', maxRounds: 2 }, {
+    conflicts: cleanMerge, 'review-r1': review, 'fix-r1': pushingFix, 're-review-r2': cleanReview,
+  })
+  assert.doesNotMatch(calls.find((call) => call.label === 'fix-r1').prompt, /LAST round/)
 })
 
 test('on GitLab the revert reopens threads through the discussions API', async () => {

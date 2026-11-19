@@ -203,8 +203,9 @@ check in turn. A last round that pushed nothing skips it.
 
 Because the floor makes severity load-bearing, a mislabelled finding has a real
 cost: tag something `low` that's really `medium` and it gets fixed in that last
-round, with only the check-only pass behind it. That's a deliberate trade — it buys you roughly a round per
-run. Raising `stopAt` raises what lands there, which is why the default is `low`.
+round, with only the check-only pass behind it. That's a deliberate trade — it
+buys you roughly a round per run. Raising `stopAt` raises what lands there,
+which is why the default is `low`.
 
 ### Options
 
