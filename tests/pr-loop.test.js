@@ -102,6 +102,9 @@ test('a commit the check returns no verdict for is unverified, not accepted', as
     summary: 'checked',
     verdicts: [
       { sha: 'abc1234', accepted: true, threads: [], reason: 'ok' },
+      { sha: 'abc1234', accepted: true, threads: [], reason: 'ok again' },
+      { sha: '', accepted: true, threads: [], reason: 'no sha' },
+      { sha: 'de', accepted: false, threads: [], reason: 'too short to name a commit' },
       { sha: '9999999', accepted: false, threads: [], reason: 'not from this round' },
     ],
   }

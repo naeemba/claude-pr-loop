@@ -441,8 +441,9 @@ ${NO_ATTRIBUTION}
 Return the result via the StructuredOutput tool.
 `.trim()
 
-// Short and full SHAs of one commit name it equally.
-const sameCommit = (one, other) => one.startsWith(other) || other.startsWith(one)
+// Short and full SHAs of one commit name it equally. Anything shorter than a
+// short sha (an empty string included) is a prefix of too many commits to name one.
+const sameCommit = (one, other) => Math.min(one.length, other.length) >= 7 && (one.startsWith(other) || other.startsWith(one))
 
 // Returns null when the last round pushed nothing, so there is nothing to check.
 const checkLastFix = async (fix) => {
@@ -465,7 +466,8 @@ const checkLastFix = async (fix) => {
   const verdicts = check.verdicts.filter((verdict) => inRound(verdict.sha))
   const unverified = fix.commitShas.filter((sha) => !verdicts.some((verdict) => sameCommit(verdict.sha, sha)))
   const rejected = verdicts.filter((verdict) => !verdict.accepted)
-  const accepted = verdicts.length - rejected.length
+  // Count commits, not verdicts: two verdicts on one commit accept it once.
+  const accepted = fix.commitShas.filter((sha) => !unverified.includes(sha) && !rejected.some((verdict) => sameCommit(verdict.sha, sha))).length
   history.push({ round: fix.round, stage: 'final-check', accepted, rejected: rejected.length, unverified: unverified.length })
   log(`Final check: ${check.summary} | accepted=${accepted} rejected=${rejected.length} unverified=${unverified.length}`)
   // Shas only: the reasons are in blockedOnHuman, one line per thread.
