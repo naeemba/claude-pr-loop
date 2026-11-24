@@ -69,6 +69,8 @@ bare `git push` or `git push origin HEAD` then fails, so the round's fixes never
 reach the PR and every reply points at a sha nobody can find.
 
 To wait for CI after pushing, run `~/.claude/scripts/pr-wait-checks.sh
-$ARGUMENTS` as a background Bash call (`run_in_background`) right after the
-push; its last line is the outcome. On `conflicts with …` run `/pr-conflicts
+$ARGUMENTS $(git rev-parse HEAD)` as a background Bash call
+(`run_in_background`) right after the push; its last line is the outcome.
+Passing the pushed sha makes it wait for the PR to show that commit rather than
+report the one before it. On `conflicts with …` run `/pr-conflicts
 $ARGUMENTS`. Never a `sleep` before it, and never repeated hand polls.
