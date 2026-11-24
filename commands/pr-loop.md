@@ -36,15 +36,14 @@ After the workflow returns, whatever its status:
    `blockedOnHuman` left open.
 5. If step 1 found it ready, `gh pr ready $ARGUMENTS`. That fires
    `ready_for_review`, and CI runs once on the final commit. If it was a draft
-   before the loop, leave it a draft.
+   before the loop, leave it a draft. To wait for that run, start
+   `~/.claude/scripts/pr-wait-checks.sh $ARGUMENTS` as a background Bash call
+   (`run_in_background`) and carry on until it reports back; its last line is
+   the outcome. Never a `sleep` before it, and never repeated hand polls.
 
 If the session dies mid-loop, the PR is left a draft with a "started" comment
 and no "finished" one. That pair is the signal: finish or re-run the loop, then
 mark it ready by hand.
-
-To wait for CI, run `gh pr checks $ARGUMENTS --watch` as a background Bash call
-(`run_in_background`) and carry on until it reports back. Never a foreground
-`sleep`, and never repeated hand polls.
 
 Call the `Workflow` tool with:
 - `scriptPath`: the ABSOLUTE path to `pr-loop.js` — your home directory followed
