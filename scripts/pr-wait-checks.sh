@@ -36,16 +36,15 @@ tries=${PR_WAIT_TRIES:-24} interval=${PR_WAIT_INTERVAL:-5}
 # Wait for the PR to show the pushed sha (GitHub moves headRefOid a moment after
 # the push) and for mergeable to settle (it reads UNKNOWN while recomputed).
 for ((try = 1; ; try++)); do
-  read -r head mergeable base < <(gh pr view "$pr" --json headRefOid,mergeable,baseRefName \
+  read -r sha mergeable base < <(gh pr view "$pr" --json headRefOid,mergeable,baseRefName \
     -q '"\(.headRefOid) \(.mergeable) \(.baseRefName)"') || exit 1
-  [ "$head" = "${want:-$head}" ] && [ "$mergeable" != UNKNOWN ] && break
+  [ "$sha" = "${want:-$sha}" ] && [ "$mergeable" != UNKNOWN ] && break
   if [ "$try" -ge "$tries" ]; then
-    [ "$head" = "${want:-$head}" ] || { echo "PR $pr never showed $want (head is $head)"; exit 1; }
+    [ "$sha" = "${want:-$sha}" ] || { echo "PR $pr never showed $want (head is $sha)"; exit 1; }
     break
   fi
   sleep "$interval"
 done
-sha=$head
 # A conflicting PR gets no pull_request run, so say so instead of waiting.
 if [ "$mergeable" = CONFLICTING ]; then
   echo "conflicts with $base — merge it in before CI can run"
