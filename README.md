@@ -47,10 +47,11 @@ opinion of its own work.
 | `commands/mr-*.md` | The GitLab five. Each reads its `pr-` twin and translates `gh` to `glab`; nothing about the review itself changes. |
 | `workflows/pr-loop.js` | The loop engine, shared by both forges. Spawns one fresh subagent per role per round and decides when to stop. |
 | `scripts/pr-unresolved-threads.sh` | Prints a PR's unresolved review threads as JSON. |
+| `scripts/pr-wait-checks.sh` | Waits for CI on a PR's head commit: Dashboard's `pr wait` when available, else `gh run watch` on that commit's runs. |
 | `scripts/mr-unresolved-threads.sh` | The same for a GitLab MR. |
 | `scripts/gitlab-remote.sh` | Works out which remote is the GitLab one, for repos that keep GitHub on `origin` and GitLab on a second remote. |
 | `install.sh` | Links all of the above into `~/.claude`, one file at a time, and copies the workflow. |
-| `tests/`, `install.test.sh` | Self-checks for the workflow, the GitLab thread lister and the install script. |
+| `tests/`, `install.test.sh` | Self-checks for the workflow, the GitLab thread lister, the CI wait and the install script. |
 
 The review, re-review, address and conflicts commands work standalone. You don't need the loop to use them.
 
@@ -331,6 +332,7 @@ in for before reaching for `/pr-loop`.
 node --test tests/pr-loop.test.js
 ./install.test.sh
 tests/mr-unresolved-threads.test.sh
+tests/pr-wait-checks.test.sh
 ```
 
 None of them need a network, `gh` or `glab`.

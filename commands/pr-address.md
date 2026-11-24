@@ -68,6 +68,7 @@ Name the destination. A conflicts round can leave the checkout detached, and a
 bare `git push` or `git push origin HEAD` then fails, so the round's fixes never
 reach the PR and every reply points at a sha nobody can find.
 
-To wait for CI after pushing, run `gh pr checks $ARGUMENTS --watch` as a
-background Bash call (`run_in_background`). Never a foreground `sleep`, and
-never repeated hand polls.
+To wait for CI after pushing, run `~/.claude/scripts/pr-wait-checks.sh
+$ARGUMENTS` as a background Bash call (`run_in_background`) right after the
+push; its last line is the outcome. On `conflicts with …` run `/pr-conflicts
+$ARGUMENTS`. Never a `sleep` before it, and never repeated hand polls.

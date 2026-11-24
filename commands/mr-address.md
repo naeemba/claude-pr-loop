@@ -33,6 +33,7 @@ GitHub mirror.
 | `pr-address.md` says | Do this instead |
 |---|---|
 | `~/.claude/scripts/pr-unresolved-threads.sh N` | `~/.claude/scripts/mr-unresolved-threads.sh $ARGUMENTS` |
+| `~/.claude/scripts/pr-wait-checks.sh N` (GitHub only) | after the push, in the same call: `glab ci status --live --branch "$source_branch"` as a background Bash call |
 | reply to a comment | `eval "$(~/.claude/scripts/gitlab-remote.sh)" && glab mr note create $ARGUMENTS --reply <discussion-id> -m "<body>"` |
 | the `resolveReviewThread` mutation (banned) | `glab mr note resolve` and `--resolve` — equally banned, see below |
 
