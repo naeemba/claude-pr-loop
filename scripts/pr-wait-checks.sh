@@ -16,7 +16,27 @@ set -uo pipefail
 pr=${1:?usage: pr-wait-checks.sh <pr-number> [pushed-sha]}
 want=${2:-}
 
+# Overridable so the self-check runs in seconds.
+tries=${PR_WAIT_TRIES:-24} interval=${PR_WAIT_INTERVAL:-5}
+
+# Wait for the PR to show the pushed sha (GitHub moves headRefOid a moment after
+# the push) and for mergeable to settle (it reads UNKNOWN while recomputed).
+# Dashboard reads the head too, so a passed sha is waited for before it runs.
+wait_for_head() {
+  for ((try = 1; ; try++)); do
+    read -r sha mergeable base < <(gh pr view "$pr" --json headRefOid,mergeable,baseRefName \
+      -q '"\(.headRefOid) \(.mergeable) \(.baseRefName)"') || exit 1
+    [ "$sha" = "${want:-$sha}" ] && [ "$mergeable" != UNKNOWN ] && break
+    if [ "$try" -ge "$tries" ]; then
+      [ "$sha" = "${want:-$sha}" ] || { echo "PR $pr never showed $want (head is $sha)"; exit 1; }
+      break
+    fi
+    sleep "$interval"
+  done
+}
+
 if [ -n "${DASHBOARD_COMMAND:-}" ]; then
+  [ -n "$want" ] && wait_for_head
   output=$(node "$DASHBOARD_COMMAND" pr wait "$pr" 2>&1)
   status=$?
   if ! grep -qiE '^(unknown|no such command)' <<<"$output"; then
@@ -30,21 +50,8 @@ fi
 # off a minute for a run created right after the push that started this wait.
 ago=$(($(date +%s) - 60))
 started=$(date -u -d "@$ago" +%FT%TZ 2>/dev/null || date -u -r "$ago" +%FT%TZ)
-# Overridable so the self-check runs in seconds.
-tries=${PR_WAIT_TRIES:-24} interval=${PR_WAIT_INTERVAL:-5}
+wait_for_head
 
-# Wait for the PR to show the pushed sha (GitHub moves headRefOid a moment after
-# the push) and for mergeable to settle (it reads UNKNOWN while recomputed).
-for ((try = 1; ; try++)); do
-  read -r sha mergeable base < <(gh pr view "$pr" --json headRefOid,mergeable,baseRefName \
-    -q '"\(.headRefOid) \(.mergeable) \(.baseRefName)"') || exit 1
-  [ "$sha" = "${want:-$sha}" ] && [ "$mergeable" != UNKNOWN ] && break
-  if [ "$try" -ge "$tries" ]; then
-    [ "$sha" = "${want:-$sha}" ] || { echo "PR $pr never showed $want (head is $sha)"; exit 1; }
-    break
-  fi
-  sleep "$interval"
-done
 # A conflicting PR gets no pull_request run, so say so instead of waiting.
 if [ "$mergeable" = CONFLICTING ]; then
   echo "conflicts with $base — merge it in before CI can run"
@@ -69,7 +76,7 @@ while :; do
   new=0
   for run in $runs; do
     [[ $watched == *" $run "* ]] && continue
-    new=1 watched+="$run "
+    new=1 idle=0 watched+="$run "
     if ! gh run watch "$run" --interval 30 --exit-status >/dev/null; then
       echo "checks failed on $sha: run $run"
       exit 1
