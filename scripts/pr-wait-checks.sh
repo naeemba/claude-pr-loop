@@ -19,6 +19,13 @@ want=${2:-}
 # Overridable so the self-check runs in seconds.
 tries=${PR_WAIT_TRIES:-24} interval=${PR_WAIT_INTERVAL:-5}
 
+# Only runs created since this script started count: a draft push's run (every
+# job skipped) finished before the PR went ready, and must not pass for the real
+# one. Back off a minute for a run created right after the push that started
+# this wait. Set before the Dashboard call so a slow head cannot move it later.
+ago=$(($(date +%s) - 60))
+started=$(date -u -d "@$ago" +%FT%TZ 2>/dev/null || date -u -r "$ago" +%FT%TZ)
+
 # Wait for the PR to show the pushed sha (GitHub moves headRefOid a moment after
 # the push) and for mergeable to settle (it reads UNKNOWN while recomputed).
 # Dashboard reads the head too, so a passed sha is waited for before it runs.
@@ -45,11 +52,6 @@ if [ -n "${DASHBOARD_COMMAND:-}" ]; then
   fi
 fi
 
-# Only runs created from here on count: a draft push's run (every job skipped)
-# finished before the PR went ready, and must not pass for the real one. Back
-# off a minute for a run created right after the push that started this wait.
-ago=$(($(date +%s) - 60))
-started=$(date -u -d "@$ago" +%FT%TZ 2>/dev/null || date -u -r "$ago" +%FT%TZ)
 wait_for_head
 
 # A conflicting PR gets no pull_request run, so say so instead of waiting.
